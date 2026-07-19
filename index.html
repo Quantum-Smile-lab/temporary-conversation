@@ -20,13 +20,12 @@
     .header {
       background: #075e54; color: #fff; padding: 12px 15px;
       text-align: center; font-weight: bold; font-size: 1.1em;
-      display: flex; justify-content: space-between; align-items: center;
     }
     .status-bar {
-      background: #fff; padding: 8px 15px; font-size: 0.85em;
+      background: #fff; padding: 8px 15px; font-size: 0.8em;
       text-align: center; border-bottom: 1px solid #ddd;
-      color: #555; min-height: 35px; display: flex;
-      align-items: center; justify-content: center; gap: 10px;
+      color: #555; min-height: 30px; display: flex;
+      align-items: center; justify-content: center; gap: 8px;
       flex-wrap: wrap;
     }
     .timer { font-weight: bold; color: #c0392b; background: #fdecea; padding: 2px 10px; border-radius: 12px; }
@@ -38,7 +37,6 @@
     }
     .btn:active { transform: scale(0.95); }
     .btn.danger { background: #e74c3c; color: #fff; border: none; }
-
     .messages {
       flex: 1; overflow-y: auto; padding: 12px;
       display: flex; flex-direction: column; gap: 4px;
@@ -81,7 +79,6 @@
       align-items: center; justify-content: center;
     }
     .input-area button:disabled { background: #b0bec5; }
-
     .setup-duration {
       display: none; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
     }
@@ -109,12 +106,7 @@
 </head>
 <body>
 <div class="container">
-  <div class="header">
-    <span>💬 محادثة آمنة</span>
-    <span id="headerStatus"></span>
-  </div>
-
-  <!-- شاشة الإعداد (للمنشئ فقط) -->
+  <div class="header">💬 محادثة آمنة</div>
   <div id="setupScreen" class="setup-duration">
     <p>⏱️ اختر مدة صلاحية الغرفة:</p>
     <select id="durationSelect">
@@ -126,12 +118,10 @@
       <option value="10080">7 أيام</option>
     </select>
     <label class="switch-label">
-      <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً فور وصول رسالة جديدة
+      <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً
     </label>
     <button class="btn" style="background:#075e54;color:#fff;padding:12px;font-size:1em;" id="createRoomBtn">✨ إنشاء الغرفة</button>
   </div>
-
-  <!-- الشاشة الرئيسية -->
   <div id="chatScreen" style="display: none; flex:1; flex-direction: column;">
     <div class="status-bar">
       <span id="statusText">⏳ في انتظار اتصال الطرف الآخر...</span>
@@ -150,8 +140,6 @@
     </div>
   </div>
 </div>
-
-<!-- مودال QR -->
 <div class="modal" id="qrModal">
   <div class="modal-content">
     <h3>📱 امسح الكود للانضمام</h3>
@@ -162,7 +150,15 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // ---------- عناصر الواجهة ----------
+  // ========== استخدام خادم PeerJS مخصص (أكثر استقراراً) ==========
+  // إذا فشل الخادم المخصص، نعود للخادم الافتراضي
+  const PEER_SERVER = {
+    host: '0.peerjs.com',
+    port: 443,
+    secure: true,
+    debug: 1 // تفعيل السجلات
+  };
+
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
   const durationSelect = document.getElementById('durationSelect');
@@ -170,7 +166,6 @@
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusText = document.getElementById('statusText');
   const timerDisplay = document.getElementById('timerDisplay');
-  const headerStatus = document.getElementById('headerStatus');
   const messagesDiv = document.getElementById('messages');
   const typingIndicator = document.getElementById('typingIndicator');
   const inputMsg = document.getElementById('inputMsg');
@@ -189,7 +184,11 @@
   let chatEnded = false;
   let autoDeleteEnabled = false;
 
-  // ---------- دوال مساعدة ----------
+  function log(msg) {
+    console.log('[CHAT]', msg);
+    addSystemMsg('🛠️ ' + msg);
+  }
+
   function generateRoomId(durationMinutes) {
     const now = Date.now();
     expiryTime = now + durationMinutes * 60 * 1000;
@@ -226,7 +225,6 @@
 
   function addMessage(text, sender) {
     if (chatEnded) return;
-    // ميزة الحذف التلقائي لرسائل الطرف الآخر
     if (sender === 'peer' && autoDeleteEnabled) {
       const oldPeerMsgs = messagesDiv.querySelectorAll('.msg.peer');
       oldPeerMsgs.forEach(el => el.remove());
@@ -238,15 +236,14 @@
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
-  function updateStatus(text, header) {
+  function updateStatus(text) {
     statusText.textContent = text;
-    if (header) headerStatus.textContent = header;
   }
 
   function endChat(reason) {
     if (chatEnded) return;
     chatEnded = true;
-    updateStatus(reason, '🔴 منتهية');
+    updateStatus(reason);
     if (conn && conn.open) conn.send({ type: 'end', reason });
     if (conn) conn.close();
     if (peer) peer.destroy();
@@ -256,18 +253,26 @@
     addSystemMsg(reason);
   }
 
-  // ---------- إعداد الاتصال ----------
   function setupConnection(connection) {
     conn = connection;
+    conn.on('open', () => {
+      log('✅ قناة البيانات مفتوحة.');
+      if (!chatEnded) {
+        updateStatus('✅ تم الاتصال!');
+        inputMsg.disabled = false;
+        sendBtn.disabled = false;
+        addSystemMsg('✅ تم الاتصال. يمكنكما التحدث الآن.');
+        updateTimer();
+        clearInterval(timerInterval);
+        timerInterval = setInterval(updateTimer, 1000);
+        if (isInitiator && conn && conn.open) {
+          conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
+        }
+      }
+    });
     conn.on('data', (data) => {
-      if (data.type === 'end') {
-        endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.');
-        return;
-      }
-      if (data.type === 'typing') {
-        typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : '';
-        return;
-      }
+      if (data.type === 'end') { endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.'); return; }
+      if (data.type === 'typing') { typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : ''; return; }
       if (data.type === 'autoDelete') {
         autoDeleteEnabled = data.enabled;
         addSystemMsg(data.enabled ? '🔒 فعّل المنشئ ميزة حذف رسائلك تلقائياً.' : '🔓 ألغى المنشئ ميزة الحذف التلقائي.');
@@ -276,24 +281,10 @@
       addMessage(data, 'peer');
     });
     conn.on('close', () => { if (!chatEnded) endChat('انقطع الاتصال.'); });
+    conn.on('error', (err) => { log('❌ خطأ في قناة البيانات: ' + err.message); });
   }
 
-  function onConnected() {
-    if (chatEnded) return;
-    updateStatus('✅ تم الاتصال!', '🟢 متصل');
-    inputMsg.disabled = false;
-    sendBtn.disabled = false;
-    addSystemMsg('✅ تم الاتصال. يمكنكما التحدث الآن.');
-    updateTimer();
-    clearInterval(timerInterval);
-    timerInterval = setInterval(updateTimer, 1000);
-    // المنشئ يرسل حالة الحذف التلقائي
-    if (isInitiator && conn && conn.open) {
-      conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
-    }
-  }
-
-  // ---------- المنشئ ----------
+  // ========== المنشئ ==========
   createRoomBtn.addEventListener('click', () => {
     const duration = parseInt(durationSelect.value);
     autoDeleteEnabled = autoDeleteCheckbox.checked;
@@ -305,25 +296,38 @@
   function startChat() {
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
-    updateStatus('⏳ في انتظار انضمام الطرف الآخر...', '🟡 بالانتظار');
-
+    updateStatus('⏳ في انتظار انضمام الطرف الآخر...');
     const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
     window.history.replaceState({}, '', newUrl);
-
     expiryTime = parseExpiry(roomId);
-    // المنشئ يستخدم roomId كمعرّف له (هذا هو الأساس)
-    peer = new Peer(roomId);
 
-    peer.on('connection', (incoming) => {
-      setupConnection(incoming);
-      incoming.on('open', () => onConnected());
-      if (incoming.open) onConnected();
+    log('🟢 المنشئ: إنشاء Peer بالمعرف: ' + roomId);
+    peer = new Peer(roomId, PEER_SERVER);
+
+    peer.on('open', (id) => {
+      log('🟢 المنشئ: Peer جاهز. معرفي: ' + id);
     });
 
-    peer.on('error', (e) => console.error('Peer error:', e));
+    peer.on('connection', (incoming) => {
+      log('🟢 المنشئ: اتصال وارد من الطرف الآخر!');
+      setupConnection(incoming);
+      if (incoming.open) {
+        log('🟢 المنشئ: الاتصال مفتوح مسبقاً.');
+        incoming.emit('open');
+      }
+    });
+
+    peer.on('error', (err) => {
+      log('❌ المنشئ: خطأ Peer: ' + err.type + ' - ' + err.message);
+    });
+
+    peer.on('disconnected', () => {
+      log('⚠️ المنشئ: انقطع عن الخادم. نحاول إعادة الاتصال...');
+      peer.reconnect();
+    });
   }
 
-  // ---------- المنضم (الطرف الثاني) ----------
+  // ========== المنضم ==========
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
@@ -339,58 +343,52 @@
     isInitiator = false;
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
-    updateStatus('⏳ جاري الاتصال بالطرف الآخر...', '🟡 محاولة');
-    addSystemMsg('جاري الاتصال بالغرفة...');
+    updateStatus('⏳ جاري الاتصال بالغرفة...');
+    log('🔵 المنضم: إنشاء Peer عشوائي...');
 
-    // المنضم يحصل على معرّف عشوائي من PeerJS
-    peer = new Peer();
+    peer = new Peer(null, PEER_SERVER);
 
     peer.on('open', (myId) => {
-      console.log('المنضم جاهز، معرفي:', myId, 'أتصل بـ:', roomId);
-      // نتصل مباشرة بمعرّف الغرفة (الذي هو معرّف المنشئ)
+      log('🔵 المنضم: Peer جاهز. معرفي: ' + myId);
+      log('🔵 المنضم: أحاول الاتصال بالغرفة: ' + roomId);
+
       conn = peer.connect(roomId, { reliable: true });
       setupConnection(conn);
 
-      conn.on('open', () => {
-        onConnected();
-      });
-
       conn.on('error', (err) => {
-        console.error('Connection error:', err);
-        updateStatus('❌ فشل الاتصال. تأكد أن المنشئ ما زال في الغرفة والرابط صحيح.', '🔴 فشل');
-        addSystemMsg('فشل الاتصال. تأكد أن الرابط صحيح والمنشئ فاتح الصفحة.');
+        log('❌ المنضم: خطأ اتصال: ' + err.message);
+        updateStatus('❌ فشل الاتصال. تأكد أن المنشئ ما زال في الغرفة.');
       });
     });
 
     peer.on('error', (err) => {
-      console.error('Peer error:', err);
+      log('❌ المنضم: خطأ Peer: ' + err.type + ' - ' + err.message);
       if (err.type === 'peer-unavailable') {
-        updateStatus('❌ الطرف الآخر غير متاح. تأكد أن الرابط صحيح والمنشئ فاتح الصفحة.', '🔴 فشل');
-        addSystemMsg('الطرف الآخر غير متاح.');
+        updateStatus('❌ الطرف الآخر غير متاح. قد يكون أغلق الصفحة أو الرابط خاطئ.');
       }
     });
+
+    peer.on('disconnected', () => {
+      log('⚠️ المنضم: انقطع عن الخادم. نحاول إعادة الاتصال...');
+      peer.reconnect();
+    });
   } else {
-    // لا يوجد ?room في الرابط -> إظهار شاشة الإعداد للمنشئ
     setupScreen.style.display = 'flex';
   }
 
-  // ---------- أزرار التحكم ----------
+  // ========== أزرار ==========
   copyLinkBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.href).then(() => alert('✅ تم نسخ الرابط!'));
   });
-
   qrBtn.addEventListener('click', () => {
     qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.href)}`;
     qrModal.style.display = 'flex';
   });
-
   closeQrBtn.addEventListener('click', () => qrModal.style.display = 'none');
-
   endChatBtn.addEventListener('click', () => {
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
-  // ---------- إرسال الرسائل ----------
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open || chatEnded) return;
@@ -399,7 +397,6 @@
     inputMsg.value = '';
     conn.send({ type: 'typing', isTyping: false });
   });
-
   let typingTimeout;
   inputMsg.addEventListener('input', () => {
     if (!conn || !conn.open || chatEnded) return;
@@ -407,9 +404,7 @@
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => conn.send({ type: 'typing', isTyping: false }), 1200);
   });
-
   inputMsg.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendBtn.click(); });
-
   window.addEventListener('beforeunload', () => {
     if (conn && conn.open) conn.send({ type: 'end', reason: 'غادر المستخدم.' });
   });
