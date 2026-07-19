@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>محادثة مؤقتة بين اثنين - مصححة</title>
+  <title>محادثة مؤقتة بين اثنين - نسخة تعمل</title>
   <style>
     body { font-family: sans-serif; max-width: 500px; margin: 30px auto; padding: 0 15px; }
     #messages { height: 300px; border: 1px solid #ccc; overflow-y: auto; padding: 10px; margin-bottom: 10px; background: #fafafa; }
@@ -29,6 +29,7 @@
     const EXPIRY_DAYS = 7;
     const ROOM_PREFIX = "temp-chat-";
 
+    // --- دوال مساعدة لتوليد والتحقق من صلاحية الغرفة ---
     function generateRoomId() {
       const now = new Date();
       const expiryDate = new Date(now.getTime() + EXPIRY_DAYS * 24 * 60 * 60 * 1000);
@@ -37,67 +38,62 @@
       return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomId = urlParams.get('room');
-    if (!roomId) {
-      roomId = generateRoomId();
-      const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
-      window.history.replaceState({}, '', newUrl);
-    }
-
     function isRoomValid(roomId) {
-      const prefix = ROOM_PREFIX;
-      if (!roomId.startsWith(prefix)) return false;
-      const dateStr = roomId.substring(prefix.length, prefix.length + 10);
+      if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
+      const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
       const expiryDate = new Date(dateStr);
       return new Date() <= expiryDate;
     }
 
-    if (!isRoomValid(roomId)) {
-      document.getElementById('status').innerText = '⚠️ انتهت صلاحية هذه الغرفة.';
-      document.getElementById('expiryNote').innerText = '';
-      throw new Error('Room expired');
+    // --- تحديد إذا كنا منشئ الغرفة أم منضم ---
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomFromUrl = urlParams.get('room');
+    let roomId;
+    let isInitiator = false; // true = المنشئ، false = المنضم
+
+    if (!roomFromUrl) {
+      // لا يوجد ?room في الرابط -> نحن المنشئ
+      isInitiator = true;
+      roomId = generateRoomId();
+      // تحديث الرابط لإظهار المعرّف
+      const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
+      window.history.replaceState({}, '', newUrl);
+    } else {
+      // يوجد ?room -> نحن المنضم
+      roomId = roomFromUrl;
+      if (!isRoomValid(roomId)) {
+        document.getElementById('status').innerText = '⚠️ انتهت صلاحية هذه الغرفة.';
+        document.getElementById('expiryNote').innerText = '';
+        throw new Error('Room expired');
+      }
     }
 
     document.getElementById('roomId').innerText = roomId;
 
+    // --- عناصر الواجهة ---
     const messagesDiv = document.getElementById('messages');
     const inputMsg = document.getElementById('inputMsg');
     const sendBtn = document.getElementById('sendBtn');
     const statusEl = document.getElementById('status');
 
-    const peer = new Peer(roomId);
+    // --- إنشاء Peer ---
+    // المنشئ: يستخدم roomId كمعرّف له (حتى يتمكن المنضم من الاتصال به)
+    // المنضم: يترك PeerJS يولد معرّفاً عشوائياً (فريداً)
+    const peer = isInitiator ? new Peer(roomId) : new Peer();
     let conn = null;
 
-    // ---------- الطرف الذي يستقبل الاتصال (المتصفح الثاني) ----------
-    peer.on('connection', (incomingConn) => {
-      // عندما يتصل بنا أحد، نحفظ الاتصال ونجهزه
-      conn = incomingConn;
-      setupConnection(); // هنا الاتصال قادم من الخارج وسيكون مفتوحاً غالباً
-      // لكننا أيضاً ننتظر حدث open تحسباً
-      conn.on('open', () => {
-        onConnectionOpen();
-      });
-      // لو كان مفتوحاً بالفعل (قد يكون الاتصال جاهزاً فوراً أحياناً)
-      if (conn.open) onConnectionOpen();
-    });
-
-    // ---------- الطرف الذي يبدأ الاتصال (المتصفح الأول) ----------
-    function connectToPeer() {
-      if (conn) return;
-      conn = peer.connect(roomId, { reliable: true });
-      // ننتظر فتح الاتصال الحقيقي
-      conn.on('open', () => {
-        onConnectionOpen();
-      });
-      conn.on('error', (err) => {
-        console.error(err);
-        statusEl.innerText = 'فشل الاتصال. تأكد أن الرابط صحيح والطرف الآخر فتحه.';
-      });
+    // --- دالة إضافة رسالة للشاشة ---
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
+      div.textContent = (sender === 'me' ? 'أنت: ' : 'الطرف الآخر: ') + text;
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    // تجهيز استقبال البيانات عند إنشاء الاتصال (سواء بادئ أو مستقبل)
-    function setupConnection() {
+    // --- إعداد الاتصال بعد إنشائه ---
+    function setupConnection(connection) {
+      conn = connection;
       conn.on('data', (data) => {
         addMessage(data, 'peer');
       });
@@ -107,28 +103,47 @@
         sendBtn.disabled = true;
         conn = null;
       });
+      conn.on('error', (err) => {
+        console.error(err);
+        statusEl.innerText = 'حدث خطأ في الاتصال.';
+      });
     }
 
-    // عندما يصبح الاتصال مفتوحاً
+    // --- عند فتح الاتصال (أي يصبح جاهزاً) ---
     function onConnectionOpen() {
       statusEl.innerText = '✅ تم الاتصال! يمكنكما التحدث الآن.';
       inputMsg.disabled = false;
       sendBtn.disabled = false;
-      // تأكد من أن setupConnection تم استدعاؤه مسبقاً (نستدعيه الآن لو لم يكن)
-      if (!conn._events?.data) {
-        setupConnection();
-      }
     }
 
-    // إضافة رسالة إلى الشاشة
-    function addMessage(text, sender) {
-      const div = document.createElement('div');
-      div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
-      div.textContent = (sender === 'me' ? 'أنت: ' : 'الطرف الآخر: ') + text;
-      messagesDiv.appendChild(div);
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    // --- المنشئ: يستمع للاتصالات الواردة ---
+    if (isInitiator) {
+      peer.on('connection', (incomingConn) => {
+        setupConnection(incomingConn);
+        // الاتصال قد يكون مفتوحاً بعد قليل أو فوراً
+        incomingConn.on('open', () => {
+          onConnectionOpen();
+        });
+        if (incomingConn.open) {
+          onConnectionOpen();
+        }
+      });
     }
 
+    // --- المنضم: يبدأ الاتصال بالمنشئ بعد أن يصبح الـ Peer جاهزاً ---
+    if (!isInitiator) {
+      peer.on('open', (myId) => {
+        console.log('معرفي العشوائي:', myId);
+        // نتصل بمعرف الغرفة (الذي هو معرف المنشئ)
+        const connection = peer.connect(roomId, { reliable: true });
+        setupConnection(connection);
+        connection.on('open', () => {
+          onConnectionOpen();
+        });
+      });
+    }
+
+    // --- أزرار الإرسال ---
     sendBtn.addEventListener('click', () => {
       const msg = inputMsg.value.trim();
       if (!msg || !conn || !conn.open) return;
@@ -141,10 +156,15 @@
       if (e.key === 'Enter') sendBtn.click();
     });
 
-    // نحاول الاتصال تلقائياً بعد تحميل الصفحة (لكن بشرط عدم وجود اتصال قادم)
-    setTimeout(() => {
-      if (!conn) connectToPeer();
-    }, 1500);
+    // معالجة أي أخطاء من peer
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+      if (err.type === 'peer-unavailable') {
+        statusEl.innerText = '❌ لا يمكن الوصول إلى الطرف الآخر. تأكد أن الرابط صحيح والطرف الآخر فتحه.';
+      } else {
+        statusEl.innerText = '⚠️ خطأ: ' + err.message;
+      }
+    });
   </script>
 </body>
 </html>
