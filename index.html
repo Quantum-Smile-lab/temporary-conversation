@@ -164,32 +164,39 @@
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
   // =============================================
-  // نفس منطق الاتصال الأصلي + الميزات الجديدة فقط
+  // نفس منطق الكود الأصلي تماماً + الميزات الجديدة
   // =============================================
 
   const ROOM_PREFIX = "temp-chat-";
-  let EXPIRY_MINUTES = 60; // القيمة الافتراضية، ستتغير من اختيار المستخدم
 
-  // --- دوال مساعدة لتوليد والتحقق من صلاحية الغرفة ---
-  function generateRoomId() {
+  // --- دوال مساعدة ---
+  function generateRoomId(durationMinutes) {
     const now = new Date();
-    const expiryDate = new Date(now.getTime() + EXPIRY_MINUTES * 60 * 1000);
+    const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
     const pad = (n) => String(n).padStart(2,'0');
-    const dateStr = `${expiryDate.getFullYear()}-${pad(expiryDate.getMonth()+1)}-${pad(expiryDate.getDate())}T${pad(expiryDate.getHours())}:${pad(expiryDate.getMinutes())}`;
+    // نستخدم نفس صيغة الكود الأصلي: YYYY-MM-DD فقط
+    const expiryStr = expiryDate.toISOString().split('T')[0];
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${dateStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
   }
 
   function isRoomValid(roomId) {
     if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
-    const dateTimePart = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 16);
-    const expiryDate = new Date(dateTimePart);
+    // نقرأ 10 حروف بعد البادئة (YYYY-MM-DD)
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    // نضيف يوم كامل للتاريخ (حتى نهاية اليوم)
+    expiryDate.setDate(expiryDate.getDate() + 1);
     return new Date() <= expiryDate;
   }
 
   function getExpiryTime(roomId) {
-    const dateTimePart = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 16);
-    return new Date(dateTimePart).getTime();
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    // وقت الانتهاء = نهاية ذلك اليوم
+    expiryDate.setDate(expiryDate.getDate() + 1);
+    expiryDate.setHours(0, 0, 0, 0);
+    return expiryDate.getTime();
   }
 
   // --- عناصر الواجهة ---
@@ -230,7 +237,6 @@
 
   function addMessage(text, sender) {
     if (chatEnded) return;
-    // ميزة الحذف التلقائي
     if (sender === 'peer' && autoDeleteEnabled) {
       const oldPeerMsgs = messagesDiv.querySelectorAll('.msg.peer');
       oldPeerMsgs.forEach(el => el.remove());
@@ -264,25 +270,26 @@
     addSystemMsg(reason);
   }
 
-  // --- إعداد الاتصال (نفس الكود الأصلي) ---
+  // --- إعداد الاتصال (نفس الكود الأصلي بالضبط) ---
   function setupConnection(connection) {
     conn = connection;
     conn.on('data', (data) => {
-      // التعامل مع أنواع البيانات الجديدة
-      if (data.type === 'end') {
-        endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.');
-        return;
+      if (typeof data === 'object' && data !== null) {
+        if (data.type === 'end') {
+          endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.');
+          return;
+        }
+        if (data.type === 'typing') {
+          typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : '';
+          return;
+        }
+        if (data.type === 'autoDelete') {
+          autoDeleteEnabled = data.enabled;
+          addSystemMsg(data.enabled ? '🔒 فعّل المنشئ ميزة حذف رسائلك تلقائياً.' : '🔓 ألغى المنشئ ميزة الحذف التلقائي.');
+          return;
+        }
       }
-      if (data.type === 'typing') {
-        typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : '';
-        return;
-      }
-      if (data.type === 'autoDelete') {
-        autoDeleteEnabled = data.enabled;
-        addSystemMsg(data.enabled ? '🔒 فعّل المنشئ ميزة حذف رسائلك تلقائياً.' : '🔓 ألغى المنشئ ميزة الحذف التلقائي.');
-        return;
-      }
-      // رسالة نصية عادية
+      // رسالة نصية عادية (نفس الكود الأصلي)
       addMessage(data, 'peer');
     });
     conn.on('close', () => {
@@ -290,7 +297,6 @@
       inputMsg.disabled = true;
       sendBtn.disabled = true;
       conn = null;
-      chatEnded = true;
     });
     conn.on('error', (err) => {
       console.error(err);
@@ -306,21 +312,24 @@
     updateTimer();
     clearInterval(timerInterval);
     timerInterval = setInterval(updateTimer, 1000);
-    // المنشئ يرسل حالة الحذف التلقائي
     if (isInitiator && conn && conn.open) {
       conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
     }
   }
 
-  // --- تهيئة حسب الرابط (نفس المنطق الأصلي) ---
+  // --- تحديد إذا كنا منشئ أم منضم (نفس الكود الأصلي) ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
   if (roomFromUrl) {
-    // --- نحن المنضم ---
+    // --- المنضم ---
     roomId = roomFromUrl;
     if (!isRoomValid(roomId)) {
-      alert('⛔ انتهت صلاحية هذه الغرفة.');
+      document.getElementById('setupScreen').style.display = 'none';
+      document.getElementById('chatScreen').style.display = 'flex';
+      document.getElementById('statusText').textContent = '⚠️ انتهت صلاحية هذه الغرفة.';
+      document.getElementById('roomIdDisplay').textContent = roomId;
+      document.getElementById('timerDisplay').textContent = 'منتهية';
       throw new Error('Room expired');
     }
     isInitiator = false;
@@ -328,9 +337,8 @@
 
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
-    statusText.textContent = '⏳ جاري الاتصال بالطرف الآخر...';
+    statusText.textContent = '⏳ في انتظار اتصال الطرف الآخر...';
     roomIdDisplay.textContent = roomId;
-    addSystemMsg('🔄 جاري الاتصال بالغرفة...');
 
     // ====== نفس الكود الأصلي للمنضم ======
     peer = new Peer();
@@ -354,16 +362,16 @@
     });
 
   } else {
-    // --- لا يوجد ?room -> إظهار شاشة الإعداد للمنشئ ---
+    // --- المنشئ: إظهار شاشة الإعداد ---
     setupScreen.style.display = 'flex';
   }
 
   // --- المنشئ: عند الضغط على زر الإنشاء ---
   createRoomBtn.addEventListener('click', () => {
-    EXPIRY_MINUTES = parseInt(durationSelect.value);
+    const durationMinutes = parseInt(durationSelect.value);
     autoDeleteEnabled = autoDeleteCheckbox.checked;
     isInitiator = true;
-    roomId = generateRoomId();
+    roomId = generateRoomId(durationMinutes);
     expiryTime = getExpiryTime(roomId);
 
     setupScreen.style.display = 'none';
@@ -428,7 +436,6 @@
     addMessage(msg, 'me');
     conn.send(msg);
     inputMsg.value = '';
-    // إيقاف مؤشر الكتابة
     conn.send({ type: 'typing', isTyping: false });
   });
 
@@ -446,7 +453,6 @@
     if (e.key === 'Enter') sendBtn.click();
   });
 
-  // عند الخروج
   window.addEventListener('beforeunload', () => {
     if (conn && conn.open) conn.send({ type: 'end', reason: 'غادر المستخدم.' });
   });
