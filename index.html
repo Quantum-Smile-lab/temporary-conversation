@@ -80,14 +80,14 @@
     }
     .input-area button:disabled { background: #b0bec5; }
     .setup-duration {
-      display: none; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
+      display: flex; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
     }
     .setup-duration select {
       padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 1em;
     }
     .switch-label {
       display: flex; align-items: center; gap: 8px; font-size: 0.9em;
-      margin-top: 5px; justify-content: center;
+      justify-content: center; margin-top: 5px;
     }
     .modal {
       display: none; position: fixed; top: 0; left: 0;
@@ -150,13 +150,12 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // ========== استخدام خادم PeerJS مخصص (أكثر استقراراً) ==========
-  // إذا فشل الخادم المخصص، نعود للخادم الافتراضي
-  const PEER_SERVER = {
+  // ========== إعدادات PeerJS ==========
+  const PEER_CONFIG = {
     host: '0.peerjs.com',
     port: 443,
     secure: true,
-    debug: 1 // تفعيل السجلات
+    debug: 0
   };
 
   const setupScreen = document.getElementById('setupScreen');
@@ -184,9 +183,12 @@
   let chatEnded = false;
   let autoDeleteEnabled = false;
 
-  function log(msg) {
-    console.log('[CHAT]', msg);
-    addSystemMsg('🛠️ ' + msg);
+  function addSystemMsg(text) {
+    const div = document.createElement('div');
+    div.className = 'system-msg';
+    div.textContent = text;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
   function generateRoomId(durationMinutes) {
@@ -213,14 +215,6 @@
     const sec = Math.floor(diff / 1000);
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
     timerDisplay.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  }
-
-  function addSystemMsg(text) {
-    const div = document.createElement('div');
-    div.className = 'system-msg';
-    div.textContent = text;
-    messagesDiv.appendChild(div);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
   function addMessage(text, sender) {
@@ -256,7 +250,6 @@
   function setupConnection(connection) {
     conn = connection;
     conn.on('open', () => {
-      log('✅ قناة البيانات مفتوحة.');
       if (!chatEnded) {
         updateStatus('✅ تم الاتصال!');
         inputMsg.disabled = false;
@@ -281,7 +274,6 @@
       addMessage(data, 'peer');
     });
     conn.on('close', () => { if (!chatEnded) endChat('انقطع الاتصال.'); });
-    conn.on('error', (err) => { log('❌ خطأ في قناة البيانات: ' + err.message); });
   }
 
   // ========== المنشئ ==========
@@ -301,33 +293,18 @@
     window.history.replaceState({}, '', newUrl);
     expiryTime = parseExpiry(roomId);
 
-    log('🟢 المنشئ: إنشاء Peer بالمعرف: ' + roomId);
-    peer = new Peer(roomId, PEER_SERVER);
-
-    peer.on('open', (id) => {
-      log('🟢 المنشئ: Peer جاهز. معرفي: ' + id);
-    });
+    // المنشئ يستخدم roomId كمعرف (نفس المنطق القديم)
+    peer = new Peer(roomId, PEER_CONFIG);
 
     peer.on('connection', (incoming) => {
-      log('🟢 المنشئ: اتصال وارد من الطرف الآخر!');
       setupConnection(incoming);
-      if (incoming.open) {
-        log('🟢 المنشئ: الاتصال مفتوح مسبقاً.');
-        incoming.emit('open');
-      }
+      if (incoming.open) incoming.emit('open');
     });
 
-    peer.on('error', (err) => {
-      log('❌ المنشئ: خطأ Peer: ' + err.type + ' - ' + err.message);
-    });
-
-    peer.on('disconnected', () => {
-      log('⚠️ المنشئ: انقطع عن الخادم. نحاول إعادة الاتصال...');
-      peer.reconnect();
-    });
+    peer.on('error', (err) => console.error('خطأ:', err));
   }
 
-  // ========== المنضم ==========
+  // ========== المنضم (نفس منطق الكود القديم الناجح) ==========
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
@@ -344,33 +321,22 @@
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     updateStatus('⏳ جاري الاتصال بالغرفة...');
-    log('🔵 المنضم: إنشاء Peer عشوائي...');
+    addSystemMsg('🔄 جاري الاتصال...');
 
-    peer = new Peer(null, PEER_SERVER);
+    // ====== هذا هو المفتاح: نستخدم نفس roomId كمعرف للمنضم أيضاً ======
+    // نضيف بادئة "joiner-" لتجنب التعارض التقني
+    const joinerId = 'joiner-' + roomId;
+    peer = new Peer(joinerId, PEER_CONFIG);
 
-    peer.on('open', (myId) => {
-      log('🔵 المنضم: Peer جاهز. معرفي: ' + myId);
-      log('🔵 المنضم: أحاول الاتصال بالغرفة: ' + roomId);
-
+    peer.on('open', () => {
+      // الآن كلا الطرفين مسجلان على الخادم بمعرفين مشتقين من roomId
       conn = peer.connect(roomId, { reliable: true });
       setupConnection(conn);
-
-      conn.on('error', (err) => {
-        log('❌ المنضم: خطأ اتصال: ' + err.message);
-        updateStatus('❌ فشل الاتصال. تأكد أن المنشئ ما زال في الغرفة.');
-      });
     });
 
     peer.on('error', (err) => {
-      log('❌ المنضم: خطأ Peer: ' + err.type + ' - ' + err.message);
-      if (err.type === 'peer-unavailable') {
-        updateStatus('❌ الطرف الآخر غير متاح. قد يكون أغلق الصفحة أو الرابط خاطئ.');
-      }
-    });
-
-    peer.on('disconnected', () => {
-      log('⚠️ المنضم: انقطع عن الخادم. نحاول إعادة الاتصال...');
-      peer.reconnect();
+      console.error('خطأ:', err);
+      updateStatus('❌ فشل الاتصال. تأكد أن المنشئ فاتح الصفحة.');
     });
   } else {
     setupScreen.style.display = 'flex';
