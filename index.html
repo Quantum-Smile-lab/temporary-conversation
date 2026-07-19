@@ -84,9 +84,6 @@
     .setup-duration {
       display: flex; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
     }
-    .setup-duration select {
-      padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 1em;
-    }
     .switch-label {
       display: flex; align-items: center; gap: 8px; font-size: 0.9em;
       justify-content: center; margin-top: 5px;
@@ -110,22 +107,16 @@
 <div class="container">
   <div class="header">💬 محادثة آمنة مؤقتة</div>
 
+  <!-- شاشة البداية للمنشئ: فقط اختيار الحذف التلقائي + زر إنشاء -->
   <div id="setupScreen" class="setup-duration">
-    <p>⏱️ اختر مدة صلاحية الغرفة:</p>
-    <select id="durationSelect">
-      <option value="5">5 دقائق</option>
-      <option value="30">30 دقيقة</option>
-      <option value="60" selected>1 ساعة</option>
-      <option value="360">6 ساعات</option>
-      <option value="1440">24 ساعة</option>
-      <option value="10080">7 أيام</option>
-    </select>
+    <p>⏱️ مدة الغرفة: <strong>6 ساعات</strong> (ثابتة)</p>
     <label class="switch-label">
       <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً
     </label>
     <button class="btn" style="background:#075e54;color:#fff;padding:12px;font-size:1em;" id="createRoomBtn">✨ إنشاء الغرفة</button>
   </div>
 
+  <!-- الشاشة الرئيسية -->
   <div id="chatScreen" style="display: none; flex:1; flex-direction: column;">
     <div class="status-bar">
       <span id="statusText">⏳ في انتظار اتصال الطرف الآخر...</span>
@@ -155,39 +146,44 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
+  // =============================================
+  // وقت ثابت 6 ساعات + نفس منطق الاتصال الأصلي
+  // =============================================
   const ROOM_PREFIX = "temp-chat-";
+  const FIXED_DURATION_HOURS = 6; // المدة الثابتة
 
-  // --- دوال محسّنة لتضمين وقت الانتهاء الفعلي ---
-  function generateRoomId(durationMinutes) {
+  function generateRoomId() {
     const now = new Date();
-    const expiryTime = new Date(now.getTime() + durationMinutes * 60 * 1000);
-    // صيغة: YYYY-MM-DDTHH:mm (مثل 2026-07-20T14:30)
-    const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${expiryTime.getFullYear()}-${pad(expiryTime.getMonth()+1)}-${pad(expiryTime.getDate())}`;
-    const timeStr = `${pad(expiryTime.getHours())}:${pad(expiryTime.getMinutes())}`;
+    const expiryDate = new Date(now.getTime() + FIXED_DURATION_HOURS * 60 * 60 * 1000);
+    // نستخدم صيغة UTC لتجنب مشاكل التوقيت المحلي
+    const expiryStr = expiryDate.toISOString(); // YYYY-MM-DDTHH:mm:ss.sssZ
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${dateStr}T${timeStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
   }
 
-  function parseExpiry(roomId) {
+  function getExpiryTimestamp(roomId) {
     if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return null;
-    // الجزء بعد البادئة: YYYY-MM-DDTHH:mm-xxxxxx
-    const rest = roomId.substring(ROOM_PREFIX.length);
-    const dateTimePart = rest.substring(0, 16); // YYYY-MM-DDTHH:mm
-    const expiryDate = new Date(dateTimePart);
-    return expiryDate.getTime();
+    const afterPrefix = roomId.substring(ROOM_PREFIX.length);
+    // نستخرج التاريخ حتى Z أو الفاصلة
+    const isoEndIndex = afterPrefix.indexOf('-') !== -1 ? afterPrefix.lastIndexOf('-') : afterPrefix.length;
+    const isoString = afterPrefix.substring(0, isoEndIndex);
+    try {
+      const date = new Date(isoString);
+      return date.getTime();
+    } catch(e) {
+      return null;
+    }
   }
 
   function isRoomValid(roomId) {
-    const ts = parseExpiry(roomId);
-    if (!ts) return false;
-    return Date.now() <= ts;
+    const expiryTime = getExpiryTimestamp(roomId);
+    if (!expiryTime) return false;
+    return Date.now() <= expiryTime;
   }
 
   // --- عناصر الواجهة ---
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
-  const durationSelect = document.getElementById('durationSelect');
   const autoDeleteCheckbox = document.getElementById('autoDeleteCheckbox');
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusText = document.getElementById('statusText');
@@ -253,7 +249,7 @@
     addSystemMsg(reason);
   }
 
-  // --- نفس إعداد الاتصال الأصلي بالضبط ---
+  // --- نفس إعداد الاتصال الأصلي ---
   function setupConnection(connection) {
     conn = connection;
     conn.on('data', (data) => {
@@ -294,6 +290,7 @@
   const roomFromUrl = urlParams.get('room');
 
   if (roomFromUrl) {
+    // منضم
     roomId = roomFromUrl;
     if (!isRoomValid(roomId)) {
       setupScreen.style.display = 'none';
@@ -303,12 +300,11 @@
       throw new Error('Room expired');
     }
     isInitiator = false;
-    expiryTime = parseExpiry(roomId);
+    expiryTime = getExpiryTimestamp(roomId);
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusText.textContent = '⏳ في انتظار اتصال الطرف الآخر...';
 
-    // نفس الكود الأصلي
     peer = new Peer();
     peer.on('open', (myId) => {
       console.log('معرفي:', myId);
@@ -323,16 +319,16 @@
       }
     });
   } else {
+    // منشئ - إظهار شاشة الإعداد
     setupScreen.style.display = 'flex';
   }
 
   // --- المنشئ: زر إنشاء الغرفة ---
   createRoomBtn.addEventListener('click', () => {
-    const duration = parseInt(durationSelect.value);
     autoDeleteEnabled = autoDeleteCheckbox.checked;
     isInitiator = true;
-    roomId = generateRoomId(duration);
-    expiryTime = parseExpiry(roomId);
+    roomId = generateRoomId();
+    expiryTime = getExpiryTimestamp(roomId);
 
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
