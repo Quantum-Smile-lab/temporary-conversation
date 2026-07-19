@@ -155,36 +155,33 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // =============================================
-  // الكود الأصلي الذي يعمل + الميزات فقط
-  // =============================================
-
   const ROOM_PREFIX = "temp-chat-";
-  let selectedDuration = 60; // دقائق
 
+  // --- دوال محسّنة لتضمين وقت الانتهاء الفعلي ---
   function generateRoomId(durationMinutes) {
     const now = new Date();
-    const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
-    const expiryStr = expiryDate.toISOString().split('T')[0];
+    const expiryTime = new Date(now.getTime() + durationMinutes * 60 * 1000);
+    // صيغة: YYYY-MM-DDTHH:mm (مثل 2026-07-20T14:30)
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${expiryTime.getFullYear()}-${pad(expiryTime.getMonth()+1)}-${pad(expiryTime.getDate())}`;
+    const timeStr = `${pad(expiryTime.getHours())}:${pad(expiryTime.getMinutes())}`;
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${dateStr}T${timeStr}-${randomPart}`;
+  }
+
+  function parseExpiry(roomId) {
+    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return null;
+    // الجزء بعد البادئة: YYYY-MM-DDTHH:mm-xxxxxx
+    const rest = roomId.substring(ROOM_PREFIX.length);
+    const dateTimePart = rest.substring(0, 16); // YYYY-MM-DDTHH:mm
+    const expiryDate = new Date(dateTimePart);
+    return expiryDate.getTime();
   }
 
   function isRoomValid(roomId) {
-    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    // نضيف يوم للتسامح
-    expiryDate.setDate(expiryDate.getDate() + 1);
-    return new Date() <= expiryDate;
-  }
-
-  function getExpiryTimestamp(roomId) {
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + 1);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
+    const ts = parseExpiry(roomId);
+    if (!ts) return false;
+    return Date.now() <= ts;
   }
 
   // --- عناصر الواجهة ---
@@ -292,14 +289,12 @@
     }
   }
 
-  // --- تحديد منشئ أم منضم (نفس الكود الأصلي) ---
+  // --- تحديد منشئ أم منضم ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
-  let roomIdFromUrl = roomFromUrl;
 
-  if (roomIdFromUrl) {
-    // منضم
-    roomId = roomIdFromUrl;
+  if (roomFromUrl) {
+    roomId = roomFromUrl;
     if (!isRoomValid(roomId)) {
       setupScreen.style.display = 'none';
       chatScreen.style.display = 'flex';
@@ -308,7 +303,7 @@
       throw new Error('Room expired');
     }
     isInitiator = false;
-    expiryTime = getExpiryTimestamp(roomId);
+    expiryTime = parseExpiry(roomId);
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusText.textContent = '⏳ في انتظار اتصال الطرف الآخر...';
@@ -328,17 +323,16 @@
       }
     });
   } else {
-    // منشئ - إظهار شاشة الإعداد
     setupScreen.style.display = 'flex';
   }
 
   // --- المنشئ: زر إنشاء الغرفة ---
   createRoomBtn.addEventListener('click', () => {
-    selectedDuration = parseInt(durationSelect.value);
+    const duration = parseInt(durationSelect.value);
     autoDeleteEnabled = autoDeleteCheckbox.checked;
     isInitiator = true;
-    roomId = generateRoomId(selectedDuration);
-    expiryTime = getExpiryTimestamp(roomId);
+    roomId = generateRoomId(duration);
+    expiryTime = parseExpiry(roomId);
 
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
@@ -347,7 +341,6 @@
     const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
     window.history.replaceState({}, '', newUrl);
 
-    // نفس الكود الأصلي
     peer = new Peer(roomId);
     peer.on('connection', (incomingConn) => {
       setupConnection(incomingConn);
@@ -370,7 +363,6 @@
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
-  // --- إرسال ---
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open || chatEnded) return;
