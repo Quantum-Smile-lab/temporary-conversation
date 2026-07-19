@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>محادثة خاصة مؤقتة</title>
+  <title>محادثة مؤقتة بين اثنين</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -22,7 +22,7 @@
       text-align: center; font-weight: bold; font-size: 1.1em;
     }
     .status-bar {
-      background: #fff; padding: 8px 15px; font-size: 0.8em;
+      background: #fff; padding: 8px 12px; font-size: 0.8em;
       text-align: center; border-bottom: 1px solid #ddd;
       color: #555; min-height: 30px; display: flex;
       align-items: center; justify-content: center; gap: 8px;
@@ -37,6 +37,7 @@
     }
     .btn:active { transform: scale(0.95); }
     .btn.danger { background: #e74c3c; color: #fff; border: none; }
+
     .messages {
       flex: 1; overflow-y: auto; padding: 12px;
       display: flex; flex-direction: column; gap: 4px;
@@ -79,6 +80,7 @@
       align-items: center; justify-content: center;
     }
     .input-area button:disabled { background: #b0bec5; }
+
     .setup-duration {
       display: flex; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
     }
@@ -102,34 +104,43 @@
       background: #ccc; border: none; border-radius: 50%;
       width: 30px; height: 30px; cursor: pointer; margin-top: 10px;
     }
+    .room-id-display {
+      font-size: 0.7em; color: #888; max-width: 150px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
   </style>
 </head>
 <body>
 <div class="container">
-  <div class="header">💬 محادثة آمنة</div>
+  <div class="header">💬 محادثة آمنة مؤقتة</div>
+
+  <!-- شاشة اختيار المدة (للمنشئ فقط) -->
   <div id="setupScreen" class="setup-duration">
     <p>⏱️ اختر مدة صلاحية الغرفة:</p>
     <select id="durationSelect">
-      <option value="5">5 دقائق</option>
+      <option value="5">5 دقائق (للمشاركة السريعة)</option>
       <option value="30">30 دقيقة</option>
       <option value="60" selected>1 ساعة</option>
       <option value="360">6 ساعات</option>
-      <option value="1440">24 ساعة</option>
-      <option value="10080">7 أيام</option>
+      <option value="1440">24 ساعة (يوم)</option>
+      <option value="10080">7 أيام (أسبوع)</option>
     </select>
     <label class="switch-label">
-      <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً
+      <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً فور وصول رسالة جديدة
     </label>
     <button class="btn" style="background:#075e54;color:#fff;padding:12px;font-size:1em;" id="createRoomBtn">✨ إنشاء الغرفة</button>
   </div>
+
+  <!-- الشاشة الرئيسية -->
   <div id="chatScreen" style="display: none; flex:1; flex-direction: column;">
     <div class="status-bar">
       <span id="statusText">⏳ في انتظار اتصال الطرف الآخر...</span>
       <span class="timer" id="timerDisplay"></span>
+      <span class="room-id-display" id="roomIdDisplay"></span>
       <div class="controls">
-        <button class="btn" id="copyLinkBtn">📋 نسخ الرابط</button>
-        <button class="btn" id="qrBtn">📷 QR</button>
-        <button class="btn danger" id="endChatBtn">✖️ إنهاء</button>
+        <button class="btn" id="copyLinkBtn" title="نسخ الرابط">📋 نسخ</button>
+        <button class="btn" id="qrBtn" title="عرض QR">📷 QR</button>
+        <button class="btn danger" id="endChatBtn" title="إنهاء المحادثة">✖️ إنهاء</button>
       </div>
     </div>
     <div class="messages" id="messages"></div>
@@ -140,24 +151,48 @@
     </div>
   </div>
 </div>
+
+<!-- مودال QR -->
 <div class="modal" id="qrModal">
   <div class="modal-content">
     <h3>📱 امسح الكود للانضمام</h3>
-    <img id="qrImage" src="" alt="QR" style="max-width:200px; margin:10px;">
+    <img id="qrImage" src="" alt="QR Code" style="max-width:200px; margin:10px;">
     <br><button class="close-btn" id="closeQrBtn">✖</button>
   </div>
 </div>
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // ========== إعدادات PeerJS ==========
-  const PEER_CONFIG = {
-    host: '0.peerjs.com',
-    port: 443,
-    secure: true,
-    debug: 0
-  };
+  // =============================================
+  // نفس منطق الاتصال الأصلي + الميزات الجديدة فقط
+  // =============================================
 
+  const ROOM_PREFIX = "temp-chat-";
+  let EXPIRY_MINUTES = 60; // القيمة الافتراضية، ستتغير من اختيار المستخدم
+
+  // --- دوال مساعدة لتوليد والتحقق من صلاحية الغرفة ---
+  function generateRoomId() {
+    const now = new Date();
+    const expiryDate = new Date(now.getTime() + EXPIRY_MINUTES * 60 * 1000);
+    const pad = (n) => String(n).padStart(2,'0');
+    const dateStr = `${expiryDate.getFullYear()}-${pad(expiryDate.getMonth()+1)}-${pad(expiryDate.getDate())}T${pad(expiryDate.getHours())}:${pad(expiryDate.getMinutes())}`;
+    const randomPart = Math.random().toString(36).substring(2, 8);
+    return `${ROOM_PREFIX}${dateStr}-${randomPart}`;
+  }
+
+  function isRoomValid(roomId) {
+    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
+    const dateTimePart = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 16);
+    const expiryDate = new Date(dateTimePart);
+    return new Date() <= expiryDate;
+  }
+
+  function getExpiryTime(roomId) {
+    const dateTimePart = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 16);
+    return new Date(dateTimePart).getTime();
+  }
+
+  // --- عناصر الواجهة ---
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
   const durationSelect = document.getElementById('durationSelect');
@@ -165,6 +200,7 @@
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusText = document.getElementById('statusText');
   const timerDisplay = document.getElementById('timerDisplay');
+  const roomIdDisplay = document.getElementById('roomIdDisplay');
   const messagesDiv = document.getElementById('messages');
   const typingIndicator = document.getElementById('typingIndicator');
   const inputMsg = document.getElementById('inputMsg');
@@ -183,6 +219,7 @@
   let chatEnded = false;
   let autoDeleteEnabled = false;
 
+  // --- دوال الواجهة ---
   function addSystemMsg(text) {
     const div = document.createElement('div');
     div.className = 'system-msg';
@@ -191,21 +228,18 @@
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
-  function generateRoomId(durationMinutes) {
-    const now = Date.now();
-    expiryTime = now + durationMinutes * 60 * 1000;
-    const d = new Date(expiryTime);
-    const pad = (n) => String(n).padStart(2,'0');
-    const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const randomPart = Math.random().toString(36).substring(2, 8);
-    return `chat-${dateStr}-${randomPart}`;
-  }
-
-  function parseExpiry(roomId) {
-    const prefix = 'chat-';
-    if (!roomId || !roomId.startsWith(prefix)) return null;
-    const dateTimePart = roomId.substring(prefix.length, prefix.length + 16);
-    return new Date(dateTimePart).getTime();
+  function addMessage(text, sender) {
+    if (chatEnded) return;
+    // ميزة الحذف التلقائي
+    if (sender === 'peer' && autoDeleteEnabled) {
+      const oldPeerMsgs = messagesDiv.querySelectorAll('.msg.peer');
+      oldPeerMsgs.forEach(el => el.remove());
+    }
+    const div = document.createElement('div');
+    div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
+    div.textContent = text;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
   function updateTimer() {
@@ -217,27 +251,10 @@
     timerDisplay.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   }
 
-  function addMessage(text, sender) {
-    if (chatEnded) return;
-    if (sender === 'peer' && autoDeleteEnabled) {
-      const oldPeerMsgs = messagesDiv.querySelectorAll('.msg.peer');
-      oldPeerMsgs.forEach(el => el.remove());
-    }
-    const div = document.createElement('div');
-    div.className = 'msg ' + sender;
-    div.textContent = text;
-    messagesDiv.appendChild(div);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-  }
-
-  function updateStatus(text) {
-    statusText.textContent = text;
-  }
-
   function endChat(reason) {
     if (chatEnded) return;
     chatEnded = true;
-    updateStatus(reason);
+    statusText.textContent = reason;
     if (conn && conn.open) conn.send({ type: 'end', reason });
     if (conn) conn.close();
     if (peer) peer.destroy();
@@ -247,130 +264,189 @@
     addSystemMsg(reason);
   }
 
+  // --- إعداد الاتصال (نفس الكود الأصلي) ---
   function setupConnection(connection) {
     conn = connection;
-    conn.on('open', () => {
-      if (!chatEnded) {
-        updateStatus('✅ تم الاتصال!');
-        inputMsg.disabled = false;
-        sendBtn.disabled = false;
-        addSystemMsg('✅ تم الاتصال. يمكنكما التحدث الآن.');
-        updateTimer();
-        clearInterval(timerInterval);
-        timerInterval = setInterval(updateTimer, 1000);
-        if (isInitiator && conn && conn.open) {
-          conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
-        }
-      }
-    });
     conn.on('data', (data) => {
-      if (data.type === 'end') { endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.'); return; }
-      if (data.type === 'typing') { typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : ''; return; }
+      // التعامل مع أنواع البيانات الجديدة
+      if (data.type === 'end') {
+        endChat(data.reason || '✖️ أنهى الطرف الآخر المحادثة.');
+        return;
+      }
+      if (data.type === 'typing') {
+        typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : '';
+        return;
+      }
       if (data.type === 'autoDelete') {
         autoDeleteEnabled = data.enabled;
         addSystemMsg(data.enabled ? '🔒 فعّل المنشئ ميزة حذف رسائلك تلقائياً.' : '🔓 ألغى المنشئ ميزة الحذف التلقائي.');
         return;
       }
+      // رسالة نصية عادية
       addMessage(data, 'peer');
     });
-    conn.on('close', () => { if (!chatEnded) endChat('انقطع الاتصال.'); });
-  }
-
-  // ========== المنشئ ==========
-  createRoomBtn.addEventListener('click', () => {
-    const duration = parseInt(durationSelect.value);
-    autoDeleteEnabled = autoDeleteCheckbox.checked;
-    roomId = generateRoomId(duration);
-    isInitiator = true;
-    startChat();
-  });
-
-  function startChat() {
-    setupScreen.style.display = 'none';
-    chatScreen.style.display = 'flex';
-    updateStatus('⏳ في انتظار انضمام الطرف الآخر...');
-    const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
-    window.history.replaceState({}, '', newUrl);
-    expiryTime = parseExpiry(roomId);
-
-    // المنشئ يستخدم roomId كمعرف (نفس المنطق القديم)
-    peer = new Peer(roomId, PEER_CONFIG);
-
-    peer.on('connection', (incoming) => {
-      setupConnection(incoming);
-      if (incoming.open) incoming.emit('open');
+    conn.on('close', () => {
+      statusText.textContent = '❌ انقطع الاتصال.';
+      inputMsg.disabled = true;
+      sendBtn.disabled = true;
+      conn = null;
+      chatEnded = true;
     });
-
-    peer.on('error', (err) => console.error('خطأ:', err));
+    conn.on('error', (err) => {
+      console.error(err);
+      statusText.textContent = 'حدث خطأ في الاتصال.';
+    });
   }
 
-  // ========== المنضم (نفس منطق الكود القديم الناجح) ==========
+  function onConnectionOpen() {
+    statusText.textContent = '✅ تم الاتصال! يمكنكما التحدث الآن.';
+    inputMsg.disabled = false;
+    sendBtn.disabled = false;
+    addSystemMsg('✅ تم الاتصال. يمكنكما التحدث الآن.');
+    updateTimer();
+    clearInterval(timerInterval);
+    timerInterval = setInterval(updateTimer, 1000);
+    // المنشئ يرسل حالة الحذف التلقائي
+    if (isInitiator && conn && conn.open) {
+      conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
+    }
+  }
+
+  // --- تهيئة حسب الرابط (نفس المنطق الأصلي) ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
   if (roomFromUrl) {
+    // --- نحن المنضم ---
     roomId = roomFromUrl;
-    expiryTime = parseExpiry(roomId);
-
-    if (!expiryTime || Date.now() >= expiryTime) {
+    if (!isRoomValid(roomId)) {
       alert('⛔ انتهت صلاحية هذه الغرفة.');
-      throw new Error('Expired');
+      throw new Error('Room expired');
     }
-
     isInitiator = false;
+    expiryTime = getExpiryTime(roomId);
+
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
-    updateStatus('⏳ جاري الاتصال بالغرفة...');
-    addSystemMsg('🔄 جاري الاتصال...');
+    statusText.textContent = '⏳ جاري الاتصال بالطرف الآخر...';
+    roomIdDisplay.textContent = roomId;
+    addSystemMsg('🔄 جاري الاتصال بالغرفة...');
 
-    // ====== هذا هو المفتاح: نستخدم نفس roomId كمعرف للمنضم أيضاً ======
-    // نضيف بادئة "joiner-" لتجنب التعارض التقني
-    const joinerId = 'joiner-' + roomId;
-    peer = new Peer(joinerId, PEER_CONFIG);
+    // ====== نفس الكود الأصلي للمنضم ======
+    peer = new Peer();
 
-    peer.on('open', () => {
-      // الآن كلا الطرفين مسجلان على الخادم بمعرفين مشتقين من roomId
-      conn = peer.connect(roomId, { reliable: true });
-      setupConnection(conn);
+    peer.on('open', (myId) => {
+      console.log('معرفي العشوائي:', myId);
+      const connection = peer.connect(roomId, { reliable: true });
+      setupConnection(connection);
+      connection.on('open', () => {
+        onConnectionOpen();
+      });
     });
 
     peer.on('error', (err) => {
-      console.error('خطأ:', err);
-      updateStatus('❌ فشل الاتصال. تأكد أن المنشئ فاتح الصفحة.');
+      console.error('Peer error:', err);
+      if (err.type === 'peer-unavailable') {
+        statusText.textContent = '❌ لا يمكن الوصول إلى الطرف الآخر. تأكد أن الرابط صحيح والطرف الآخر فتحه.';
+      } else {
+        statusText.textContent = '⚠️ خطأ: ' + err.message;
+      }
     });
+
   } else {
+    // --- لا يوجد ?room -> إظهار شاشة الإعداد للمنشئ ---
     setupScreen.style.display = 'flex';
   }
 
-  // ========== أزرار ==========
-  copyLinkBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(window.location.href).then(() => alert('✅ تم نسخ الرابط!'));
+  // --- المنشئ: عند الضغط على زر الإنشاء ---
+  createRoomBtn.addEventListener('click', () => {
+    EXPIRY_MINUTES = parseInt(durationSelect.value);
+    autoDeleteEnabled = autoDeleteCheckbox.checked;
+    isInitiator = true;
+    roomId = generateRoomId();
+    expiryTime = getExpiryTime(roomId);
+
+    setupScreen.style.display = 'none';
+    chatScreen.style.display = 'flex';
+    statusText.textContent = '⏳ في انتظار اتصال الطرف الآخر...';
+    roomIdDisplay.textContent = roomId;
+
+    // تحديث الرابط
+    const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
+    window.history.replaceState({}, '', newUrl);
+
+    // ====== نفس الكود الأصلي للمنشئ ======
+    peer = new Peer(roomId);
+
+    peer.on('connection', (incomingConn) => {
+      setupConnection(incomingConn);
+      incomingConn.on('open', () => {
+        onConnectionOpen();
+      });
+      if (incomingConn.open) {
+        onConnectionOpen();
+      }
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+    });
   });
+
+  // --- أزرار التحكم ---
+  copyLinkBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      alert('✅ تم نسخ الرابط!');
+    }).catch(() => {
+      prompt('انسخ الرابط يدوياً:', window.location.href);
+    });
+  });
+
   qrBtn.addEventListener('click', () => {
     qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.href)}`;
     qrModal.style.display = 'flex';
   });
-  closeQrBtn.addEventListener('click', () => qrModal.style.display = 'none');
-  endChatBtn.addEventListener('click', () => {
-    if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
+
+  closeQrBtn.addEventListener('click', () => {
+    qrModal.style.display = 'none';
   });
 
+  qrModal.addEventListener('click', (e) => {
+    if (e.target === qrModal) qrModal.style.display = 'none';
+  });
+
+  endChatBtn.addEventListener('click', () => {
+    if (confirm('هل تريد إنهاء المحادثة؟')) {
+      endChat('✖️ تم إنهاء المحادثة.');
+    }
+  });
+
+  // --- أزرار الإرسال (نفس الكود الأصلي) ---
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open || chatEnded) return;
     addMessage(msg, 'me');
     conn.send(msg);
     inputMsg.value = '';
+    // إيقاف مؤشر الكتابة
     conn.send({ type: 'typing', isTyping: false });
   });
+
   let typingTimeout;
   inputMsg.addEventListener('input', () => {
     if (!conn || !conn.open || chatEnded) return;
     conn.send({ type: 'typing', isTyping: true });
     clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => conn.send({ type: 'typing', isTyping: false }), 1200);
+    typingTimeout = setTimeout(() => {
+      if (conn && conn.open) conn.send({ type: 'typing', isTyping: false });
+    }, 1200);
   });
-  inputMsg.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendBtn.click(); });
+
+  inputMsg.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendBtn.click();
+  });
+
+  // عند الخروج
   window.addEventListener('beforeunload', () => {
     if (conn && conn.open) conn.send({ type: 'end', reason: 'غادر المستخدم.' });
   });
