@@ -4,12 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>محادثة مؤقتة بين اثنين</title>
+  <!-- مكتبة QR Code محلية (لا ترسل بيانات لأي خادم) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       height: 100%;
@@ -24,16 +22,16 @@
       align-items: center;
     }
 
-    /* الحاوية الرئيسية: ثابتة وتملأ الشاشة بالكامل */
+    /* الحاوية الرئيسية - اقتراح صديقك */
     .container {
       width: 100%;
       max-width: 480px;
-      height: 100dvh; /* وحدة حديثة تمثل الارتفاع المرئي الفعلي */
-      background: #fff;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+      height: 100dvh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      background: #fff;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
       border-radius: 0;
     }
 
@@ -43,6 +41,15 @@
         height: 95vh;
         max-height: 800px;
       }
+    }
+
+    /* شاشة المحادثة - تطبيق اقتراح صديقك */
+    #chatScreen {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .header {
@@ -98,9 +105,10 @@
     .btn:active { transform: scale(0.95); }
     .btn.danger { background: #e74c3c; color: #fff; border: none; }
 
-    /* منطقة الرسائل: تأخذ كل المساحة المتبقية وتكون قابلة للتمرير */
+    /* منطقة الرسائل فقط تتحرك - اقتراح صديقك */
     .messages {
-      flex: 1 1 auto;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
       padding: 12px;
       display: flex;
@@ -195,7 +203,7 @@
     }
     .input-area button:disabled { background: #b0bec5; }
 
-    /* شاشة الإعداد: تظهر بدل المحادثة */
+    /* شاشة الإعداد */
     .setup-duration {
       display: flex;
       flex-direction: column;
@@ -251,10 +259,16 @@
       padding: 15px;
       margin-top: 10px;
     }
+
+    #qrcode-container {
+      display: flex;
+      justify-content: center;
+      margin: 15px 0;
+    }
   </style>
 </head>
 <body>
-<div class="container" id="mainContainer">
+<div class="container">
   <div class="header">💬 محادثة آمنة مؤقتة</div>
 
   <!-- شاشة اختيار المدة -->
@@ -297,7 +311,7 @@
   </div>
 
   <!-- شاشة المحادثة الرئيسية -->
-  <div id="chatScreen" style="display: none; flex:1; flex-direction: column; height: 100%;">
+  <div id="chatScreen" style="display: none;">
     <div class="status-bar">
       <span id="statusText">⏳ في انتظار اتصال الطرف الآخر...</span>
       <span class="timer" id="timerDisplay"></span>
@@ -320,8 +334,8 @@
 <div class="modal" id="qrModal">
   <div class="modal-content">
     <h3>📱 امسح الكود للانضمام</h3>
-    <img id="qrImage" src="" alt="QR" style="max-width:200px; margin:10px;">
-    <br><button class="close-btn" id="closeQrBtn">✖</button>
+    <div id="qrcode-container"></div>
+    <button class="close-btn" id="closeQrBtn">✖</button>
   </div>
 </div>
 
@@ -343,7 +357,6 @@
     return 0;
   }
 
-  // عناصر الواجهة
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
   const durationSelect = document.getElementById('durationSelect');
@@ -359,7 +372,7 @@
   const qrBtn = document.getElementById('qrBtn');
   const endChatBtn = document.getElementById('endChatBtn');
   const qrModal = document.getElementById('qrModal');
-  const qrImage = document.getElementById('qrImage');
+  const qrContainer = document.getElementById('qrcode-container');
   const closeQrBtn = document.getElementById('closeQrBtn');
 
   let peer, conn;
@@ -478,7 +491,6 @@
     }
   }
 
-  // تحديد منشئ أم منضم
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
@@ -537,20 +549,37 @@
     peer.on('error', (err) => console.error('Peer error:', err));
   });
 
-  // أزرار التحكم
+  // QR Code محلي
+  function generateQRCode(text) {
+    qrContainer.innerHTML = '';
+    new QRCode(qrContainer, {
+      text: text,
+      width: 200,
+      height: 200,
+      colorDark: "#000000",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  }
+
+  qrBtn.addEventListener('click', () => {
+    qrModal.style.display = 'flex';
+    generateQRCode(window.location.href);
+  });
+
+  closeQrBtn.addEventListener('click', () => {
+    qrModal.style.display = 'none';
+    qrContainer.innerHTML = '';
+  });
+
   copyLinkBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.href).then(() => alert('✅ تم النسخ!'));
   });
-  qrBtn.addEventListener('click', () => {
-    qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(window.location.href)}`;
-    qrModal.style.display = 'flex';
-  });
-  closeQrBtn.addEventListener('click', () => qrModal.style.display = 'none');
+
   endChatBtn.addEventListener('click', () => {
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
-  // إرسال الرسائل
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open) return;
