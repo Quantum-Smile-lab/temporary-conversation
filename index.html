@@ -2,29 +2,29 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>محادثة مؤقتة بين اثنين</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #e8ded2; display: flex; justify-content: center; align-items: center;
-      min-height: 100vh; padding: 8px;
+      height: 100vh; height: 100dvh; padding: 8px; overflow: hidden;
     }
     .container {
-      width: 100%; max-width: 480px; background: #fff;
+      width: 100%; max-width: 480px; height: 100%; background: #fff;
       border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.12);
       overflow: hidden; display: flex; flex-direction: column;
-      height: 92vh; max-height: 780px;
     }
     .header {
       background: #075e54; color: #fff; padding: 12px 15px;
       text-align: center; font-weight: bold; font-size: 1.1em;
+      flex-shrink: 0;
     }
     .status-bar {
       background: #fff; padding: 8px 12px; font-size: 0.8em;
       text-align: center; border-bottom: 1px solid #ddd;
-      color: #555; min-height: 30px; display: flex;
+      color: #555; flex-shrink: 0; display: flex;
       align-items: center; justify-content: center; gap: 8px;
       flex-wrap: wrap;
     }
@@ -39,9 +39,9 @@
     .btn.danger { background: #e74c3c; color: #fff; border: none; }
 
     .messages {
-      flex: 1; overflow-y: auto; padding: 12px;
+      flex: 1 1 auto; overflow-y: auto; padding: 12px;
       display: flex; flex-direction: column; gap: 4px;
-      background: #efeae2;
+      background: #efeae2; min-height: 0;
     }
     .msg {
       max-width: 85%; padding: 8px 12px; border-radius: 8px;
@@ -66,12 +66,12 @@
     }
     .typing-indicator {
       font-size: 0.75em; color: #888; padding: 0 15px 4px;
-      min-height: 20px; font-style: italic;
+      min-height: 20px; font-style: italic; flex-shrink: 0;
     }
     .input-area {
       display: flex; padding: 8px; gap: 8px;
       background: #f0f0f0; border-top: 1px solid #ddd;
-      align-items: center;
+      align-items: center; flex-shrink: 0;
     }
     .input-area input {
       flex: 1; padding: 10px 14px; border: none; border-radius: 25px;
@@ -87,6 +87,7 @@
 
     .setup-duration {
       display: flex; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
+      overflow-y: auto; flex: 1;
     }
     .setup-duration select {
       padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 1em;
@@ -116,15 +117,26 @@
   <div class="header">💬 محادثة آمنة مؤقتة</div>
 
   <div id="setupScreen" class="setup-duration">
-    <p>📅 اختر عدد أيام صلاحية الغرفة:</p>
-    <select id="daysSelect">
-      <option value="1">1 يوم</option>
-      <option value="2">2 يوم</option>
-      <option value="3">3 أيام</option>
-      <option value="4">4 أيام</option>
-      <option value="5">5 أيام</option>
-      <option value="6">6 أيام</option>
-      <option value="7" selected>7 أيام</option>
+    <p>⏱️ اختر المدة:</p>
+    <select id="durationSelect">
+      <optgroup label="بالأيام">
+        <option value="0d">ينتهي آخر اليوم</option>
+        <option value="1d">1 يوم</option>
+        <option value="2d">2 يوم</option>
+        <option value="3d">3 أيام</option>
+        <option value="4d">4 أيام</option>
+        <option value="5d">5 أيام</option>
+        <option value="6d">6 أيام</option>
+        <option value="7d" selected>7 أيام</option>
+      </optgroup>
+      <optgroup label="بالساعات">
+        <option value="1h">1 ساعة</option>
+        <option value="2h">2 ساعة</option>
+        <option value="3h">3 ساعة</option>
+        <option value="6h">6 ساعة</option>
+        <option value="12h">12 ساعة</option>
+        <option value="24h">24 ساعة</option>
+      </optgroup>
     </select>
 
     <div class="advanced-options">
@@ -171,39 +183,27 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // =============================================
-  // الكود الأصلي المُثبت + ميزة الإخفاء
-  // =============================================
   const ROOM_PREFIX = "temp-chat-";
 
-  // دوال الوقت (نفس الكود الأصلي تماماً - أيام فقط)
-  function generateRoomId(days) {
+  // --- دوال الوقت (تُستخدم فقط لتوليد معرف فريد، لا تؤثر على الصلاحية) ---
+  function generateRoomId() {
     const now = new Date();
-    const expiryDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-    const expiryStr = expiryDate.toISOString().split('T')[0]; // YYYY-MM-DD فقط
+    const dateStr = now.toISOString().split('T')[0];
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${dateStr}-${randomPart}`;
   }
 
-  function isRoomValid(roomId) {
-    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    return new Date() <= expiryDate;
-  }
-
-  function getExpiryTimestamp(roomId) {
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    expiryDate.setDate(expiryDate.getDate() + 1);
-    expiryDate.setHours(0, 0, 0, 0);
-    return expiryDate.getTime();
+  function parseDuration(durationStr) {
+    const num = parseInt(durationStr);
+    if (durationStr.endsWith('d')) return num * 24 * 60 * 60 * 1000; // أيام
+    if (durationStr.endsWith('h')) return num * 60 * 60 * 1000; // ساعات
+    return 0;
   }
 
   // عناصر الواجهة
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
-  const daysSelect = document.getElementById('daysSelect');
+  const durationSelect = document.getElementById('durationSelect');
   const visibleCountSelect = document.getElementById('visibleCountSelect');
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusEl = document.getElementById('statusText');
@@ -281,6 +281,7 @@
     addSystemMsg(reason);
   }
 
+  // --- إعداد الاتصال (يحتوي على منطق استقبال وقت الانتهاء) ---
   function setupConnection(connection) {
     conn = connection;
     conn.on('data', (data) => {
@@ -290,6 +291,16 @@
         if (data.type === 'visibilityConfig') {
           visibleCount = data.visibleCount;
           addSystemMsg(`🔒 عدد الرسائل الظاهرة: ${visibleCount === 0 ? 'الكل' : visibleCount}`);
+          return;
+        }
+        if (data.type === 'requestExpiry' && isInitiator && expiryTime) {
+          conn.send({ type: 'expiryTime', time: expiryTime });
+          return;
+        }
+        if (data.type === 'expiryTime' && !isInitiator && !expiryTime) {
+          expiryTime = data.time;
+          updateTimer();
+          timerInterval = setInterval(updateTimer, 1000);
           return;
         }
       }
@@ -312,29 +323,27 @@
     inputMsg.disabled = false;
     sendBtn.disabled = false;
     addSystemMsg('✅ تم الاتصال.');
-    updateTimer();
-    clearInterval(timerInterval);
-    timerInterval = setInterval(updateTimer, 1000);
+    if (expiryTime) {
+      updateTimer();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimer, 1000);
+    }
     if (isInitiator && conn && conn.open) {
       conn.send({ type: 'visibilityConfig', visibleCount: visibleCount });
     }
+    // المنضم يطلب وقت الانتهاء
+    if (!isInitiator && conn && conn.open) {
+      conn.send({ type: 'requestExpiry' });
+    }
   }
 
-  // تحديد منشئ أم منضم (نفس الكود الأصلي)
+  // --- المنشئ / المنضم (نفس الآلية) ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
   if (roomFromUrl) {
     roomId = roomFromUrl;
-    if (!isRoomValid(roomId)) {
-      setupScreen.style.display = 'none';
-      chatScreen.style.display = 'flex';
-      statusEl.innerText = '⚠️ انتهت صلاحية هذه الغرفة.';
-      timerDisplay.textContent = 'منتهية';
-      throw new Error('Room expired');
-    }
     isInitiator = false;
-    expiryTime = getExpiryTimestamp(roomId);
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusEl.innerText = '⏳ في انتظار اتصال الطرف الآخر...';
@@ -359,11 +368,18 @@
   }
 
   createRoomBtn.addEventListener('click', () => {
-    const days = parseInt(daysSelect.value);
+    const durationMs = parseDuration(durationSelect.value);
+    if (durationMs === 0) {
+      // ينتهي آخر اليوم: نحسب منتصف ليلة اليوم التالي
+      const now = new Date();
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      expiryTime = endOfDay.getTime();
+    } else {
+      expiryTime = Date.now() + durationMs;
+    }
     visibleCount = parseInt(visibleCountSelect.value);
     isInitiator = true;
-    roomId = generateRoomId(days);
-    expiryTime = getExpiryTimestamp(roomId);
+    roomId = generateRoomId();
 
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
@@ -394,7 +410,6 @@
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
-  // إرسال الرسائل
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open) return;
