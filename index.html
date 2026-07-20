@@ -176,23 +176,26 @@
 <script>
   const ROOM_PREFIX = "temp-chat-";
 
-  // --- دوال الوقت (مصححة: تتضمن الساعة والدقيقة) ---
+  // --- دوال الوقت بتوقيت UTC (تحل مشكلة فروق التوقيت) ---
   function generateRoomId(durationMinutes) {
     const now = new Date();
     const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
-    const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${expiryDate.getFullYear()}-${pad(expiryDate.getMonth()+1)}-${pad(expiryDate.getDate())}`;
-    const timeStr = `${pad(expiryDate.getHours())}:${pad(expiryDate.getMinutes())}`;
+    // نستخدم toISOString() الذي يعطي صيغة UTC: "2026-07-20T14:30:00.000Z"
+    const isoString = expiryDate.toISOString();
+    // نحذف الثواني والأجزاء العشرية ونستبدل Z بـ _ لتجنب تعقيدات URL
+    const cleanStr = isoString.replace(/:\d{2}\.\d{3}Z$/, '').replace(':', '-'); // تصبح: 2026-07-20T14-30
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${dateStr}T${timeStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${cleanStr}-${randomPart}`;
   }
 
   function getExpiryTimestamp(roomId) {
     if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return null;
     const afterPrefix = roomId.substring(ROOM_PREFIX.length);
     const dashIndex = afterPrefix.lastIndexOf('-');
-    const isoPart = afterPrefix.substring(0, dashIndex);
-    const date = new Date(isoPart);
+    const isoLike = afterPrefix.substring(0, dashIndex);
+    // نعيد الصيغة إلى شكل يمكن تحليله: نستبدل آخر - بـ :
+    const isoString = isoLike.replace(/T(\d{2})-(\d{2})$/, 'T$1:$2:00Z');
+    const date = new Date(isoString);
     return date.getTime();
   }
 
@@ -201,7 +204,7 @@
     return ts !== null && Date.now() <= ts;
   }
 
-  // --- عناصر الواجهة ---
+  // --- بقية المتغيرات والوظائف (كما في النسخة السابقة) ---
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
   const durationSelect = document.getElementById('durationSelect');
@@ -225,7 +228,7 @@
   let timerInterval;
   let isInitiator = false;
   let chatEnded = false;
-  let visibleCount = 3; // عدد الرسائل الظاهرة
+  let visibleCount = 3;
 
   function addSystemMsg(text) {
     const div = document.createElement('div');
@@ -236,10 +239,9 @@
   }
 
   function maskOldMessages(sender) {
-    if (visibleCount === 0) return; // 0 يعني بدون إخفاء
+    if (visibleCount === 0) return;
     const selector = sender === 'me' ? '.msg.me' : '.msg.peer';
     const msgs = Array.from(messagesDiv.querySelectorAll(selector));
-    // نترك آخر visibleCount رسالة ظاهرة، ونخفي الباقي
     const keep = visibleCount;
     for (let i = 0; i < msgs.length - keep; i++) {
       const el = msgs[i];
@@ -253,7 +255,6 @@
 
   function addMessage(text, sender) {
     if (chatEnded) return;
-    // قبل إضافة الرسالة الجديدة، نخفي القديمة لنفس المرسل
     maskOldMessages(sender);
     const div = document.createElement('div');
     div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
@@ -323,7 +324,6 @@
     }
   }
 
-  // --- بداية الكود الأصلي (تحديد المنشئ/المنضم) ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
