@@ -45,7 +45,7 @@
     }
     .msg {
       max-width: 85%; padding: 8px 12px; border-radius: 8px;
-      line-height: 1.4; word-wrap: break-word;
+      line-height: 1.4; word-wrap: break-word; transition: all 0.3s;
     }
     .me {
       align-self: flex-end; background: #d9fdd3;
@@ -54,6 +54,10 @@
     .peer {
       align-self: flex-start; background: #fff;
       margin-right: 20%; border-top-left-radius: 0;
+    }
+    .masked {
+      background: #ddd; color: #999; font-style: italic;
+      letter-spacing: 2px;
     }
     .system-msg {
       align-self: center; background: #e1f3fb; color: #1a6d8a;
@@ -86,10 +90,6 @@
     }
     .setup-duration select {
       padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 1em;
-    }
-    .switch-label {
-      display: flex; align-items: center; gap: 8px; font-size: 0.9em;
-      justify-content: center; margin-top: 5px;
     }
     .modal {
       display: none; position: fixed; top: 0; left: 0;
@@ -131,23 +131,15 @@
     </select>
 
     <div class="advanced-options">
-      <label>🔒 حذف رسائلي أنا عندما يرد الطرف الآخر:</label>
-      <select id="deleteMyMsgsMode">
-        <option value="0" selected>بدون حذف (تبقى كل رسائلي)</option>
-        <option value="1">حذف الكل ما عدا آخر رسالة</option>
-        <option value="2">حذف الكل ما عدا آخر رسالتين</option>
-        <option value="3">حذف الكل ما عدا آخر 3 رسائل</option>
-        <option value="all">حذف كل رسائلي فوراً</option>
+      <label>🔒 عدد الرسائل الظاهرة قبل أن تتحول إلى نجوم:</label>
+      <select id="visibleCountSelect">
+        <option value="1">1 رسالة (الخصوصية القصوى)</option>
+        <option value="2">2 رسالتين</option>
+        <option value="3" selected>3 رسائل</option>
+        <option value="5">5 رسائل</option>
+        <option value="0">الكل (بدون إخفاء)</option>
       </select>
-      <small style="color:#666">عندما يرسل الطرف الآخر رسالة، ستحذف رسائلك السابقة حسب هذا الإعداد.</small>
-      <hr>
-      <label>🔒 حذف رسائل الطرف الآخر عندما يرسل (كما سابقاً):</label>
-      <select id="deletePeerMsgsMode">
-        <option value="0" selected>بدون حذف (تبقى كل رسائله)</option>
-        <option value="1">الاحتفاظ بآخر رسالة فقط</option>
-        <option value="2">الاحتفاظ بآخر رسالتين</option>
-        <option value="3">الاحتفاظ بآخر 3 رسائل</option>
-      </select>
+      <small style="color:#666">عند إرسال رسالة جديدة، كل الرسائل السابقة لنفس المرسل تصبح **** ما عدا هذا العدد.</small>
     </div>
 
     <button class="btn" style="background:#075e54;color:#fff;padding:12px;font-size:1em;" id="createRoomBtn">✨ إنشاء الغرفة</button>
@@ -184,26 +176,36 @@
 <script>
   const ROOM_PREFIX = "temp-chat-";
 
+  // --- دوال الوقت (مصححة: تتضمن الساعة والدقيقة) ---
   function generateRoomId(durationMinutes) {
     const now = new Date();
     const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
-    const expiryStr = expiryDate.toISOString().split('T')[0];
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${expiryDate.getFullYear()}-${pad(expiryDate.getMonth()+1)}-${pad(expiryDate.getDate())}`;
+    const timeStr = `${pad(expiryDate.getHours())}:${pad(expiryDate.getMinutes())}`;
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
+    return `${ROOM_PREFIX}${dateStr}T${timeStr}-${randomPart}`;
+  }
+
+  function getExpiryTimestamp(roomId) {
+    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return null;
+    const afterPrefix = roomId.substring(ROOM_PREFIX.length);
+    const dashIndex = afterPrefix.lastIndexOf('-');
+    const isoPart = afterPrefix.substring(0, dashIndex);
+    const date = new Date(isoPart);
+    return date.getTime();
   }
 
   function isRoomValid(roomId) {
-    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    return new Date() <= expiryDate;
+    const ts = getExpiryTimestamp(roomId);
+    return ts !== null && Date.now() <= ts;
   }
 
+  // --- عناصر الواجهة ---
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
   const durationSelect = document.getElementById('durationSelect');
-  const deleteMyMsgsMode = document.getElementById('deleteMyMsgsMode');
-  const deletePeerMsgsMode = document.getElementById('deletePeerMsgsMode');
+  const visibleCountSelect = document.getElementById('visibleCountSelect');
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusEl = document.getElementById('statusText');
   const timerDisplay = document.getElementById('timerDisplay');
@@ -219,13 +221,11 @@
   const closeQrBtn = document.getElementById('closeQrBtn');
 
   let peer, conn;
-  let roomId;
+  let roomId, expiryTime;
+  let timerInterval;
   let isInitiator = false;
   let chatEnded = false;
-  let deleteMyKeepCount = 0; // 0 = disabled, 'all' = delete all
-  let deletePeerKeepCount = 0;
-  let expiryTime;
-  let timerInterval;
+  let visibleCount = 3; // عدد الرسائل الظاهرة
 
   function addSystemMsg(text) {
     const div = document.createElement('div');
@@ -235,34 +235,31 @@
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
-  function addMessage(text, sender) {
-    if (chatEnded) return;
-    // تطبيق حذف رسائل الطرف الآخر عند وصول رسالة منه
-    if (sender === 'peer' && deletePeerKeepCount > 0) {
-      const peerMsgs = Array.from(messagesDiv.querySelectorAll('.msg.peer'));
-      if (peerMsgs.length >= deletePeerKeepCount) {
-        const toDelete = peerMsgs.slice(0, peerMsgs.length - deletePeerKeepCount + 1);
-        toDelete.forEach(el => el.remove());
+  function maskOldMessages(sender) {
+    if (visibleCount === 0) return; // 0 يعني بدون إخفاء
+    const selector = sender === 'me' ? '.msg.me' : '.msg.peer';
+    const msgs = Array.from(messagesDiv.querySelectorAll(selector));
+    // نترك آخر visibleCount رسالة ظاهرة، ونخفي الباقي
+    const keep = visibleCount;
+    for (let i = 0; i < msgs.length - keep; i++) {
+      const el = msgs[i];
+      if (!el.classList.contains('masked')) {
+        el.dataset.originalText = el.textContent;
+        el.textContent = '****';
+        el.classList.add('masked');
       }
     }
+  }
+
+  function addMessage(text, sender) {
+    if (chatEnded) return;
+    // قبل إضافة الرسالة الجديدة، نخفي القديمة لنفس المرسل
+    maskOldMessages(sender);
     const div = document.createElement('div');
     div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
     div.textContent = text;
     messagesDiv.appendChild(div);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    // تطبيق حذف رسائلي أنا عندما يرد الطرف الآخر (تطبق بعد إضافة الرسالة الجديدة)
-    if (sender === 'peer' && deleteMyKeepCount !== undefined && deleteMyKeepCount !== 0) {
-      const myMsgs = Array.from(messagesDiv.querySelectorAll('.msg.me'));
-      if (deleteMyKeepCount === 'all') {
-        myMsgs.forEach(el => el.remove());
-      } else {
-        const keep = parseInt(deleteMyKeepCount);
-        if (myMsgs.length > keep) {
-          const toDelete = myMsgs.slice(0, myMsgs.length - keep);
-          toDelete.forEach(el => el.remove());
-        }
-      }
-    }
   }
 
   function updateTimer() {
@@ -293,10 +290,9 @@
       if (typeof data === 'object' && data !== null) {
         if (data.type === 'end') { endChat(data.reason); return; }
         if (data.type === 'typing') { typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : ''; return; }
-        if (data.type === 'deleteConfig') {
-          deleteMyKeepCount = data.deleteMyKeepCount;
-          deletePeerKeepCount = data.deletePeerKeepCount;
-          addSystemMsg('🔒 تم استلام إعدادات الحذف.');
+        if (data.type === 'visibilityConfig') {
+          visibleCount = data.visibleCount;
+          addSystemMsg(`🔒 عدد الرسائل الظاهرة: ${visibleCount === 0 ? 'الكل' : visibleCount}`);
           return;
         }
       }
@@ -323,14 +319,11 @@
     clearInterval(timerInterval);
     timerInterval = setInterval(updateTimer, 1000);
     if (isInitiator && conn && conn.open) {
-      conn.send({
-        type: 'deleteConfig',
-        deleteMyKeepCount: deleteMyKeepCount,
-        deletePeerKeepCount: deletePeerKeepCount
-      });
+      conn.send({ type: 'visibilityConfig', visibleCount: visibleCount });
     }
   }
 
+  // --- بداية الكود الأصلي (تحديد المنشئ/المنضم) ---
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
@@ -344,15 +337,10 @@
       throw new Error('Room expired');
     }
     isInitiator = false;
+    expiryTime = getExpiryTimestamp(roomId);
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusEl.innerText = '⏳ في انتظار اتصال الطرف الآخر...';
-
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    expiryDate.setDate(expiryDate.getDate() + 1);
-    expiryDate.setHours(0, 0, 0, 0);
-    expiryTime = expiryDate.getTime();
 
     peer = new Peer();
     peer.on('open', (myId) => {
@@ -376,19 +364,10 @@
 
   createRoomBtn.addEventListener('click', () => {
     const durationMinutes = parseInt(durationSelect.value);
-    // قراءة إعدادات الحذف
-    const myMode = deleteMyMsgsMode.value;
-    deleteMyKeepCount = myMode === 'all' ? 'all' : parseInt(myMode);
-    deletePeerKeepCount = parseInt(deletePeerMsgsMode.value);
-
+    visibleCount = parseInt(visibleCountSelect.value);
     isInitiator = true;
     roomId = generateRoomId(durationMinutes);
-
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    expiryDate.setDate(expiryDate.getDate() + 1);
-    expiryDate.setHours(0, 0, 0, 0);
-    expiryTime = expiryDate.getTime();
+    expiryTime = getExpiryTimestamp(roomId);
 
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
