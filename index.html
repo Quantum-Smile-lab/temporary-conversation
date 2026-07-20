@@ -116,18 +116,15 @@
   <div class="header">💬 محادثة آمنة مؤقتة</div>
 
   <div id="setupScreen" class="setup-duration">
-    <p>⏱️ اختر مدة صلاحية الغرفة:</p>
-    <select id="durationSelect">
-      <option value="1">1 دقيقة (للتجربة)</option>
-      <option value="5">5 دقائق</option>
-      <option value="30">30 دقيقة</option>
-      <option value="60" selected>1 ساعة</option>
-      <option value="120">2 ساعة</option>
-      <option value="360">6 ساعات</option>
-      <option value="720">12 ساعة</option>
-      <option value="1440">24 ساعة</option>
-      <option value="4320">3 أيام</option>
-      <option value="10080">7 أيام</option>
+    <p>📅 اختر عدد أيام صلاحية الغرفة:</p>
+    <select id="daysSelect">
+      <option value="1">1 يوم</option>
+      <option value="2">2 يوم</option>
+      <option value="3">3 أيام</option>
+      <option value="4">4 أيام</option>
+      <option value="5">5 أيام</option>
+      <option value="6">6 أيام</option>
+      <option value="7" selected>7 أيام</option>
     </select>
 
     <div class="advanced-options">
@@ -174,40 +171,39 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
+  // =============================================
+  // الكود الأصلي المُثبت + ميزة الإخفاء
+  // =============================================
   const ROOM_PREFIX = "temp-chat-";
 
-  // --- دوال الوقت بتوقيت UTC (تحل مشكلة فروق التوقيت) ---
-  function generateRoomId(durationMinutes) {
+  // دوال الوقت (نفس الكود الأصلي تماماً - أيام فقط)
+  function generateRoomId(days) {
     const now = new Date();
-    const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
-    // نستخدم toISOString() الذي يعطي صيغة UTC: "2026-07-20T14:30:00.000Z"
-    const isoString = expiryDate.toISOString();
-    // نحذف الثواني والأجزاء العشرية ونستبدل Z بـ _ لتجنب تعقيدات URL
-    const cleanStr = isoString.replace(/:\d{2}\.\d{3}Z$/, '').replace(':', '-'); // تصبح: 2026-07-20T14-30
+    const expiryDate = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+    const expiryStr = expiryDate.toISOString().split('T')[0]; // YYYY-MM-DD فقط
     const randomPart = Math.random().toString(36).substring(2, 8);
-    return `${ROOM_PREFIX}${cleanStr}-${randomPart}`;
-  }
-
-  function getExpiryTimestamp(roomId) {
-    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return null;
-    const afterPrefix = roomId.substring(ROOM_PREFIX.length);
-    const dashIndex = afterPrefix.lastIndexOf('-');
-    const isoLike = afterPrefix.substring(0, dashIndex);
-    // نعيد الصيغة إلى شكل يمكن تحليله: نستبدل آخر - بـ :
-    const isoString = isoLike.replace(/T(\d{2})-(\d{2})$/, 'T$1:$2:00Z');
-    const date = new Date(isoString);
-    return date.getTime();
+    return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
   }
 
   function isRoomValid(roomId) {
-    const ts = getExpiryTimestamp(roomId);
-    return ts !== null && Date.now() <= ts;
+    if (!roomId || !roomId.startsWith(ROOM_PREFIX)) return false;
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    return new Date() <= expiryDate;
   }
 
-  // --- بقية المتغيرات والوظائف (كما في النسخة السابقة) ---
+  function getExpiryTimestamp(roomId) {
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    expiryDate.setDate(expiryDate.getDate() + 1);
+    expiryDate.setHours(0, 0, 0, 0);
+    return expiryDate.getTime();
+  }
+
+  // عناصر الواجهة
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
-  const durationSelect = document.getElementById('durationSelect');
+  const daysSelect = document.getElementById('daysSelect');
   const visibleCountSelect = document.getElementById('visibleCountSelect');
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusEl = document.getElementById('statusText');
@@ -324,6 +320,7 @@
     }
   }
 
+  // تحديد منشئ أم منضم (نفس الكود الأصلي)
   const urlParams = new URLSearchParams(window.location.search);
   const roomFromUrl = urlParams.get('room');
 
@@ -344,7 +341,6 @@
 
     peer = new Peer();
     peer.on('open', (myId) => {
-      console.log('معرفي العشوائي:', myId);
       const connection = peer.connect(roomId, { reliable: true });
       setupConnection(connection);
       connection.on('open', () => onConnectionOpen());
@@ -363,10 +359,10 @@
   }
 
   createRoomBtn.addEventListener('click', () => {
-    const durationMinutes = parseInt(durationSelect.value);
+    const days = parseInt(daysSelect.value);
     visibleCount = parseInt(visibleCountSelect.value);
     isInitiator = true;
-    roomId = generateRoomId(durationMinutes);
+    roomId = generateRoomId(days);
     expiryTime = getExpiryTimestamp(roomId);
 
     setupScreen.style.display = 'none';
@@ -385,6 +381,7 @@
     peer.on('error', (err) => console.error('Peer error:', err));
   });
 
+  // أزرار التحكم
   copyLinkBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.href).then(() => alert('✅ تم النسخ!'));
   });
@@ -397,6 +394,7 @@
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
+  // إرسال الرسائل
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open) return;
