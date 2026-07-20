@@ -84,6 +84,9 @@
     .setup-duration {
       display: flex; flex-direction: column; gap: 12px; padding: 20px; text-align: center;
     }
+    .setup-duration select {
+      padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 1em;
+    }
     .switch-label {
       display: flex; align-items: center; gap: 8px; font-size: 0.9em;
       justify-content: center; margin-top: 5px;
@@ -101,6 +104,11 @@
       background: #ccc; border: none; border-radius: 50%;
       width: 30px; height: 30px; cursor: pointer; margin-top: 10px;
     }
+    .advanced-options {
+      display: flex; flex-direction: column; gap: 10px;
+      background: #f9f9f9; border-radius: 12px; padding: 15px;
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -108,10 +116,40 @@
   <div class="header">💬 محادثة آمنة مؤقتة</div>
 
   <div id="setupScreen" class="setup-duration">
-    <p>⏱️ مدة الغرفة: <strong>7 أيام</strong></p>
-    <label class="switch-label">
-      <input type="checkbox" id="autoDeleteCheckbox"> 🔒 حذف رسائل الطرف الآخر تلقائياً
-    </label>
+    <p>⏱️ اختر مدة صلاحية الغرفة:</p>
+    <select id="durationSelect">
+      <option value="1">1 دقيقة (للتجربة)</option>
+      <option value="5">5 دقائق</option>
+      <option value="30">30 دقيقة</option>
+      <option value="60" selected>1 ساعة</option>
+      <option value="120">2 ساعة</option>
+      <option value="360">6 ساعات</option>
+      <option value="720">12 ساعة</option>
+      <option value="1440">24 ساعة</option>
+      <option value="4320">3 أيام</option>
+      <option value="10080">7 أيام</option>
+    </select>
+
+    <div class="advanced-options">
+      <label>🔒 حذف رسائلي أنا عندما يرد الطرف الآخر:</label>
+      <select id="deleteMyMsgsMode">
+        <option value="0" selected>بدون حذف (تبقى كل رسائلي)</option>
+        <option value="1">حذف الكل ما عدا آخر رسالة</option>
+        <option value="2">حذف الكل ما عدا آخر رسالتين</option>
+        <option value="3">حذف الكل ما عدا آخر 3 رسائل</option>
+        <option value="all">حذف كل رسائلي فوراً</option>
+      </select>
+      <small style="color:#666">عندما يرسل الطرف الآخر رسالة، ستحذف رسائلك السابقة حسب هذا الإعداد.</small>
+      <hr>
+      <label>🔒 حذف رسائل الطرف الآخر عندما يرسل (كما سابقاً):</label>
+      <select id="deletePeerMsgsMode">
+        <option value="0" selected>بدون حذف (تبقى كل رسائله)</option>
+        <option value="1">الاحتفاظ بآخر رسالة فقط</option>
+        <option value="2">الاحتفاظ بآخر رسالتين</option>
+        <option value="3">الاحتفاظ بآخر 3 رسائل</option>
+      </select>
+    </div>
+
     <button class="btn" style="background:#075e54;color:#fff;padding:12px;font-size:1em;" id="createRoomBtn">✨ إنشاء الغرفة</button>
   </div>
 
@@ -144,16 +182,11 @@
 
 <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 <script>
-  // =============================================
-  // نفس الكود الأصلي تماماً + الميزات فقط
-  // =============================================
-  const EXPIRY_DAYS = 7;
   const ROOM_PREFIX = "temp-chat-";
 
-  // --- دوال مساعدة (من الكود الأصلي) ---
-  function generateRoomId() {
+  function generateRoomId(durationMinutes) {
     const now = new Date();
-    const expiryDate = new Date(now.getTime() + EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+    const expiryDate = new Date(now.getTime() + durationMinutes * 60 * 1000);
     const expiryStr = expiryDate.toISOString().split('T')[0];
     const randomPart = Math.random().toString(36).substring(2, 8);
     return `${ROOM_PREFIX}${expiryStr}-${randomPart}`;
@@ -166,33 +199,11 @@
     return new Date() <= expiryDate;
   }
 
-  // --- تحديد إذا كنا منشئ الغرفة أم منضم (من الكود الأصلي) ---
-  const urlParams = new URLSearchParams(window.location.search);
-  const roomFromUrl = urlParams.get('room');
-  let roomId;
-  let isInitiator = false;
-  let autoDeleteEnabled = false;
-
-  if (!roomFromUrl) {
-    isInitiator = true;
-    roomId = generateRoomId();
-    const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
-    window.history.replaceState({}, '', newUrl);
-  } else {
-    roomId = roomFromUrl;
-    if (!isRoomValid(roomId)) {
-      document.getElementById('setupScreen').style.display = 'none';
-      document.getElementById('chatScreen').style.display = 'flex';
-      document.getElementById('statusText').innerText = '⚠️ انتهت صلاحية هذه الغرفة.';
-      document.getElementById('timerDisplay').innerText = 'منتهية';
-      throw new Error('Room expired');
-    }
-  }
-
-  // --- عناصر الواجهة ---
   const setupScreen = document.getElementById('setupScreen');
   const chatScreen = document.getElementById('chatScreen');
-  const autoDeleteCheckbox = document.getElementById('autoDeleteCheckbox');
+  const durationSelect = document.getElementById('durationSelect');
+  const deleteMyMsgsMode = document.getElementById('deleteMyMsgsMode');
+  const deletePeerMsgsMode = document.getElementById('deletePeerMsgsMode');
   const createRoomBtn = document.getElementById('createRoomBtn');
   const statusEl = document.getElementById('statusText');
   const timerDisplay = document.getElementById('timerDisplay');
@@ -208,21 +219,14 @@
   const closeQrBtn = document.getElementById('closeQrBtn');
 
   let peer, conn;
+  let roomId;
+  let isInitiator = false;
   let chatEnded = false;
+  let deleteMyKeepCount = 0; // 0 = disabled, 'all' = delete all
+  let deletePeerKeepCount = 0;
   let expiryTime;
   let timerInterval;
 
-  // --- حساب وقت الانتهاء (من الكود الأصلي) ---
-  function calculateExpiryTime() {
-    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
-    const expiryDate = new Date(dateStr);
-    expiryDate.setDate(expiryDate.getDate() + 1); // نهاية اليوم التالي
-    expiryDate.setHours(0, 0, 0, 0);
-    expiryTime = expiryDate.getTime();
-  }
-  if (roomId) calculateExpiryTime();
-
-  // --- دوال الواجهة ---
   function addSystemMsg(text) {
     const div = document.createElement('div');
     div.className = 'system-msg';
@@ -233,15 +237,32 @@
 
   function addMessage(text, sender) {
     if (chatEnded) return;
-    if (sender === 'peer' && autoDeleteEnabled) {
-      const old = messagesDiv.querySelectorAll('.msg.peer');
-      old.forEach(el => el.remove());
+    // تطبيق حذف رسائل الطرف الآخر عند وصول رسالة منه
+    if (sender === 'peer' && deletePeerKeepCount > 0) {
+      const peerMsgs = Array.from(messagesDiv.querySelectorAll('.msg.peer'));
+      if (peerMsgs.length >= deletePeerKeepCount) {
+        const toDelete = peerMsgs.slice(0, peerMsgs.length - deletePeerKeepCount + 1);
+        toDelete.forEach(el => el.remove());
+      }
     }
     const div = document.createElement('div');
     div.className = 'msg ' + (sender === 'me' ? 'me' : 'peer');
     div.textContent = text;
     messagesDiv.appendChild(div);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    // تطبيق حذف رسائلي أنا عندما يرد الطرف الآخر (تطبق بعد إضافة الرسالة الجديدة)
+    if (sender === 'peer' && deleteMyKeepCount !== undefined && deleteMyKeepCount !== 0) {
+      const myMsgs = Array.from(messagesDiv.querySelectorAll('.msg.me'));
+      if (deleteMyKeepCount === 'all') {
+        myMsgs.forEach(el => el.remove());
+      } else {
+        const keep = parseInt(deleteMyKeepCount);
+        if (myMsgs.length > keep) {
+          const toDelete = myMsgs.slice(0, myMsgs.length - keep);
+          toDelete.forEach(el => el.remove());
+        }
+      }
+    }
   }
 
   function updateTimer() {
@@ -266,14 +287,18 @@
     addSystemMsg(reason);
   }
 
-  // --- إعداد الاتصال (من الكود الأصلي) ---
   function setupConnection(connection) {
     conn = connection;
     conn.on('data', (data) => {
       if (typeof data === 'object' && data !== null) {
         if (data.type === 'end') { endChat(data.reason); return; }
         if (data.type === 'typing') { typingIndicator.textContent = data.isTyping ? '✍️ الطرف الآخر يكتب...' : ''; return; }
-        if (data.type === 'autoDelete') { autoDeleteEnabled = data.enabled; addSystemMsg(data.enabled ? '🔒 حذف تلقائي مفعّل' : '🔓 حذف تلقائي ملغى'); return; }
+        if (data.type === 'deleteConfig') {
+          deleteMyKeepCount = data.deleteMyKeepCount;
+          deletePeerKeepCount = data.deletePeerKeepCount;
+          addSystemMsg('🔒 تم استلام إعدادات الحذف.');
+          return;
+        }
       }
       addMessage(data, 'peer');
     });
@@ -298,34 +323,38 @@
     clearInterval(timerInterval);
     timerInterval = setInterval(updateTimer, 1000);
     if (isInitiator && conn && conn.open) {
-      conn.send({ type: 'autoDelete', enabled: autoDeleteEnabled });
+      conn.send({
+        type: 'deleteConfig',
+        deleteMyKeepCount: deleteMyKeepCount,
+        deletePeerKeepCount: deletePeerKeepCount
+      });
     }
   }
 
-  // --- إنشاء Peer (من الكود الأصلي) ---
-  if (roomId) {
-    peer = isInitiator ? new Peer(roomId) : new Peer();
-  }
+  const urlParams = new URLSearchParams(window.location.search);
+  const roomFromUrl = urlParams.get('room');
 
-  // --- المنشئ: يستمع للاتصالات الواردة (من الكود الأصلي) ---
-  if (isInitiator && peer) {
+  if (roomFromUrl) {
+    roomId = roomFromUrl;
+    if (!isRoomValid(roomId)) {
+      setupScreen.style.display = 'none';
+      chatScreen.style.display = 'flex';
+      statusEl.innerText = '⚠️ انتهت صلاحية هذه الغرفة.';
+      timerDisplay.textContent = 'منتهية';
+      throw new Error('Room expired');
+    }
+    isInitiator = false;
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusEl.innerText = '⏳ في انتظار اتصال الطرف الآخر...';
 
-    peer.on('connection', (incomingConn) => {
-      setupConnection(incomingConn);
-      incomingConn.on('open', () => onConnectionOpen());
-      if (incomingConn.open) onConnectionOpen();
-    });
-  }
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    expiryDate.setDate(expiryDate.getDate() + 1);
+    expiryDate.setHours(0, 0, 0, 0);
+    expiryTime = expiryDate.getTime();
 
-  // --- المنضم: يبدأ الاتصال (من الكود الأصلي) ---
-  if (!isInitiator && peer) {
-    setupScreen.style.display = 'none';
-    chatScreen.style.display = 'flex';
-    statusEl.innerText = '⏳ في انتظار اتصال الطرف الآخر...';
-
+    peer = new Peer();
     peer.on('open', (myId) => {
       console.log('معرفي العشوائي:', myId);
       const connection = peer.connect(roomId, { reliable: true });
@@ -340,22 +369,43 @@
         statusEl.innerText = '⚠️ خطأ: ' + err.message;
       }
     });
-  }
-
-  // --- زر إنشاء الغرفة (للمنشئ) ---
-  if (isInitiator) {
+  } else {
     setupScreen.style.display = 'flex';
+    chatScreen.style.display = 'none';
   }
 
   createRoomBtn.addEventListener('click', () => {
-    autoDeleteEnabled = autoDeleteCheckbox.checked;
-    // المنشئ بالفعل أنشأ roomId، فقط نعرض الشاشة
+    const durationMinutes = parseInt(durationSelect.value);
+    // قراءة إعدادات الحذف
+    const myMode = deleteMyMsgsMode.value;
+    deleteMyKeepCount = myMode === 'all' ? 'all' : parseInt(myMode);
+    deletePeerKeepCount = parseInt(deletePeerMsgsMode.value);
+
+    isInitiator = true;
+    roomId = generateRoomId(durationMinutes);
+
+    const dateStr = roomId.substring(ROOM_PREFIX.length, ROOM_PREFIX.length + 10);
+    const expiryDate = new Date(dateStr);
+    expiryDate.setDate(expiryDate.getDate() + 1);
+    expiryDate.setHours(0, 0, 0, 0);
+    expiryTime = expiryDate.getTime();
+
     setupScreen.style.display = 'none';
     chatScreen.style.display = 'flex';
     statusEl.innerText = '⏳ في انتظار اتصال الطرف الآخر...';
+
+    const newUrl = window.location.origin + window.location.pathname + '?room=' + roomId;
+    window.history.replaceState({}, '', newUrl);
+
+    peer = new Peer(roomId);
+    peer.on('connection', (incomingConn) => {
+      setupConnection(incomingConn);
+      incomingConn.on('open', () => onConnectionOpen());
+      if (incomingConn.open) onConnectionOpen();
+    });
+    peer.on('error', (err) => console.error('Peer error:', err));
   });
 
-  // --- أزرار التحكم ---
   copyLinkBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(window.location.href).then(() => alert('✅ تم النسخ!'));
   });
@@ -368,7 +418,6 @@
     if (confirm('إنهاء المحادثة؟')) endChat('✖️ تم إنهاء المحادثة.');
   });
 
-  // --- أزرار الإرسال (من الكود الأصلي) ---
   sendBtn.addEventListener('click', () => {
     const msg = inputMsg.value.trim();
     if (!msg || !conn || !conn.open) return;
@@ -385,22 +434,9 @@
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => { if (conn && conn.open) conn.send({ type: 'typing', isTyping: false }); }, 1200);
   });
-
   inputMsg.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendBtn.click();
   });
-
-  // معالجة أخطاء peer (من الكود الأصلي)
-  if (peer) {
-    peer.on('error', (err) => {
-      console.error('Peer error:', err);
-      if (err.type === 'peer-unavailable') {
-        statusEl.innerText = '❌ لا يمكن الوصول إلى الطرف الآخر. تأكد أن الرابط صحيح والطرف الآخر فتحه.';
-      } else {
-        statusEl.innerText = '⚠️ خطأ: ' + err.message;
-      }
-    });
-  }
 
   window.addEventListener('beforeunload', () => {
     if (conn && conn.open) conn.send({ type: 'end', reason: 'غادر المستخدم.' });
